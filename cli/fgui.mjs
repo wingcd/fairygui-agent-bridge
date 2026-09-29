@@ -17,6 +17,43 @@ import process from "node:process";
 const BASE = process.env.FGUI_BRIDGE_URL || "http://localhost:7531/";
 
 const [cmd, ...rest] = process.argv.slice(2);
+
+// discover: list all running bridge instances across projects (no editor needed)
+if (cmd === "discover") {
+    const os = await import("node:os");
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const regPath = path.join(os.homedir(), ".fgui-agent-bridge", "registry.json");
+    let entries = [];
+    try {
+        entries = JSON.parse(fs.readFileSync(regPath, "utf8"));
+    } catch {
+        entries = [];
+    }
+    const alive = [];
+    for (const e of entries) {
+        try {
+            process.kill(e.pid, 0); // liveness probe, signal 0
+        } catch {
+            continue; // stale entry
+        }
+        let ping = null;
+        try {
+            const r = await fetch(`http://localhost:${e.port}/`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cmd: "ping" }),
+            });
+            ping = await r.json();
+        } catch {
+            continue; // not answering
+        }
+        alive.push({ port: e.port, pid: e.pid, project: ping?.data?.project || e.project, url: `http://localhost:${e.port}/` });
+    }
+    console.log(JSON.stringify({ ok: true, registry: regPath, instances: alive }, null, 2));
+    process.exit(0);
+}
+
 if (!cmd || cmd === "-h" || cmd === "--help") {
     console.log(`fgui-agent-bridge CLI
 
@@ -28,6 +65,10 @@ commands are forwarded verbatim to the editor plugin, e.g.:
   create-component | delete-item | open-doc | close-doc | list-children
   insert-object | set-property | remove-object | save-all | refresh
   publish | screenshot | bridge-log
+
+special:
+  discover   list ALL running bridge instances across projects
+             (reads ~/.fgui-agent-bridge/registry.json, pings each)
 
 examples:
   fgui ping

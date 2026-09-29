@@ -123,13 +123,19 @@ function propValueIn(v) {
 var COMMANDS = {};
 
 COMMANDS.ping = function (a) {
-    return ok({ version: VERSION, editor: "FairyGUI", projectOpen: App.project != null });
+    return ok({
+        version: VERSION,
+        editor: "FairyGUI",
+        port: Bridge.port,
+        projectOpen: App.project != null,
+        project: projectLabel()
+    });
 };
 
 COMMANDS.project_info = function (a) {
     if (App.project == null) throw "no project open";
     var p = App.project;
-    var d = { packages: p.allPackages.Count, packageNames: [] };
+    var d = { port: Bridge.port, packages: p.allPackages.Count, packageNames: [] };
     try { d.name = p.name; } catch (e) { }
     try { d.path = p.projectPath; } catch (e) { }
     for (var i = 0; i < p.allPackages.Count; i++) {
@@ -339,22 +345,95 @@ function stepPublish(job) {
 var ASYNC_STARTERS = { publish: startPublish };
 var ASYNC_STEPPERS = { publish: stepPublish };
 
+// ---------------- instance registry (multi-project support) ----------------
+// A fixed per-user registry file maps running editor instances to their
+// ports, so agents can tell several open projects apart.
+
+var RegistryPath = (function () {
+    try {
+        return CS.System.Environment.GetFolderPath(CS.System.Environment.SpecialFolder.UserProfile)
+            + "/.fgui-agent-bridge/registry.json";
+    } catch (e) { return null; }
+})();
+
+function registryRead() {
+    if (RegistryPath == null) return [];
+    try {
+        var s = CS.System.IO.File.ReadAllText(RegistryPath);
+        var arr = JSON.parse(s);
+        return Array.isArray(arr) ? arr : [];
+    } catch (e) { return []; }
+}
+
+function registryWrite(arr) {
+    if (RegistryPath == null) return;
+    try {
+        CS.System.IO.Directory.CreateDirectory(
+            CS.System.IO.Path.GetDirectoryName(RegistryPath));
+        CS.System.IO.File.WriteAllText(RegistryPath, JSON.stringify(arr));
+    } catch (e) { plog("registry write failed: " + e); }
+}
+
+function processAlive(pid) {
+    if (!pid) return false;
+    try {
+        var p = CS.System.Diagnostics.Process.GetProcessById(pid);
+        return p != null && !p.HasExited;
+    } catch (e) { return false; }
+}
+
+function registryRegister(port) {
+    var myPid = CS.System.Diagnostics.Process.GetCurrentProcess().Id;
+    var arr = registryRead().filter(function (e) { return processAlive(e.pid) && e.pid !== myPid; });
+    var entry = {
+        port: port,
+        pid: myPid,
+        project: projectLabel(),
+        startedAt: new Date().toISOString()
+    };
+    arr.push(entry);
+    registryWrite(arr);
+    return entry;
+}
+
+function registryUnregister() {
+    var arr = registryRead().filter(function (e) { return processAlive(e.pid); });
+    registryWrite(arr);
+}
+
+function projectLabel() {
+    try {
+        if (App.project != null) {
+            var n = App.project.name;
+            if (n) return String(n);
+        }
+    } catch (e) { }
+    return "";
+}
+
 // ---------------- HTTP plumbing (main thread only) ----------------
 
 function startServer() {
-    var port = readPort();
-    try {
-        var listener = new CS.System.Net.HttpListener();
-        listener.Prefixes.Add("http://localhost:" + port + "/");
-        listener.Start();
-        Bridge.listener = listener;
-        Bridge.pendingAccept = listener.BeginGetContext(null, null);
-        plog("listening on http://localhost:" + port + "/ v" + VERSION);
-        return true;
-    } catch (e) {
-        plog("FAILED to start http listener on port " + port + ": " + e);
-        return false;
+    var wanted = readPort();
+    var maxTries = 21; // e.g. 7531..7551
+    for (var port = wanted; port < wanted + maxTries; port++) {
+        try {
+            var listener = new CS.System.Net.HttpListener();
+            listener.Prefixes.Add("http://localhost:" + port + "/");
+            listener.Start();
+            Bridge.listener = listener;
+            Bridge.port = port;
+            Bridge.pendingAccept = listener.BeginGetContext(null, null);
+            var entry = registryRegister(port);
+            plog("listening on http://localhost:" + port + "/ v" + VERSION
+                + (port !== wanted ? " (default port busy, auto-picked)" : ""));
+            return true;
+        } catch (e) {
+            // port busy or listener error - try the next port
+        }
     }
+    plog("FAILED to start http listener on ports " + wanted + ".." + (wanted + maxTries - 1));
+    return false;
 }
 
 function readBody(ctx) {
@@ -490,5 +569,6 @@ function boot() {
 boot();
 
 function onDestroy() {
+    try { registryUnregister(); } catch (e) { }
     try { if (Bridge.listener != null) Bridge.listener.Close(); } catch (e) { }
 }

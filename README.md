@@ -104,6 +104,16 @@ AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件
 
 属性名与编辑器属性面板/XML 属性一致（`xy`/`size`/`title`/`text`/`icon`/`fontSize`/`visible`/`pivot`/`anchor`…），向量值用 `"x,y"` 字符串形式。参考：编辑器插件 API 的权威定义见官方仓库 [fairygui/FairyGUI-Editor](https://github.com/fairygui/FairyGUI-Editor) 的 `plugin/TsAPI/editor.d.ts`（许可证未标明，故本仓库不复制该文件）。
 
+## 同时编辑多个项目（多编辑器实例）
+
+FairyGUI 一个编辑器实例只开一个工程；开多个编辑器窗口编辑多个工程时，本桥**自动区分**：
+
+- 端口冲突自动递增：第一个实例占 7531，第二个自动用 7532，依此类推（可在各工程 `plugins/agent-bridge/port.txt` 固定指定）
+- 每个实例启动时把 `{port, pid, project}` 注册到 `~/.fgui-agent-bridge/registry.json`，退出自动注销（含陈旧条目清理）
+- `ping` / `project_info` 返回本实例端口与工程名，一眼核对连的是谁
+- CLI：`node cli/fgui.mjs discover` 列出所有在线实例及其工程、端口
+- 指定实例：CLI/MCP 设 `FGUI_BRIDGE_URL=http://localhost:7532/`
+
 ## 已实测（免费版编辑器）
 
 - `publish`：`PublishHandler` 发布成功（171ms，小包），产物与 GUI 手动发布 md5 **逐字节一致**；无专业版拦截
