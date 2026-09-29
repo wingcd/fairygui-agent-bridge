@@ -54,6 +54,106 @@ if (cmd === "discover") {
     process.exit(0);
 }
 
+// launch: start the editor with a project (window minimized-friendly,
+// the plugin sets runInBackground itself).
+// usage: fgui launch '{"project":"D:/work/my-ui","editor":"optional/exe/path"}'
+if (cmd === "launch" || cmd === "ensure") {
+    const { spawn } = await import("node:child_process");
+    const fs = await import("node:fs");
+    const a = rest.length ? JSON.parse(rest.join(" ")) : {};
+
+    const ping = async (url) => {
+        try {
+            const r = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cmd: "ping" }),
+                signal: AbortSignal.timeout(3000),
+            });
+            return await r.json();
+        } catch {
+            return null;
+        }
+    };
+
+    const alive = async () => ping(BASE);
+
+    if (cmd === "ensure" && (await alive())?.ok) {
+        console.log(JSON.stringify({ ok: true, already: true, ping: await alive() }, null, 2));
+        process.exit(0);
+    }
+
+    const findEditor = () => {
+        if (a.editor) return a.editor;
+        if (process.env.FGUI_EDITOR_EXE) return process.env.FGUI_EDITOR_EXE;
+        const candidates = [
+            "C:/Program Files/FairyGUI-Editor/FairyGUI-Editor.exe",
+            "D:/Program Files/FairyGUI-Editor/FairyGUI-Editor.exe",
+            "D:/Applications/FairyGUI-Editor/FairyGUI-Editor.exe",
+            "C:/Applications/FairyGUI-Editor/FairyGUI-Editor.exe",
+            "/Applications/FairyGUI-Editor.app", // macOS
+        ];
+        for (const c of candidates) {
+            try {
+                fs.accessSync(c);
+                return c;
+            } catch { /* keep looking */ }
+        }
+        return null;
+    };
+
+    const editor = findEditor();
+    const project = a.project;
+    if (!editor) {
+        console.error(JSON.stringify({
+            ok: false,
+            error: "editor executable not found; pass args.editor or set FGUI_EDITOR_EXE",
+        }, null, 2));
+        process.exit(4);
+    }
+    if (!project) {
+        console.error(JSON.stringify({ ok: false, error: "args.project (dir containing the .fairy file) required" }, null, 2));
+        process.exit(4);
+    }
+    // the editor wants the absolute path of the .fairy project descriptor;
+    // accept either the file or its containing directory
+    const path = await import("node:path");
+    let proj = project;
+    if (!proj.toLowerCase().endsWith(".fairy")) {
+        const found = fs.readdirSync(proj).filter((f) => f.toLowerCase().endsWith(".fairy"));
+        if (found.length === 0) {
+            console.error(JSON.stringify({ ok: false, error: `no .fairy file found in ${proj}` }, null, 2));
+            process.exit(4);
+        }
+        proj = path.join(proj, found[0]);
+    }
+    proj = path.resolve(proj);
+
+    const isMacApp = editor.endsWith(".app");
+    const child = isMacApp
+        ? spawn("open", ["-a", editor, proj], { detached: true, stdio: "ignore" })
+        : spawn(editor, [proj], { detached: true, stdio: "ignore" });
+    child.unref();
+
+    if (cmd === "launch") {
+        console.log(JSON.stringify({ ok: true, launched: editor, project }, null, 2));
+        process.exit(0);
+    }
+
+    // ensure: wait for the bridge to answer
+    const deadline = Date.now() + (a.timeout_ms || 180000);
+    while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const p = await alive();
+        if (p?.ok) {
+            console.log(JSON.stringify({ ok: true, launched: editor, waitedMs: Date.now() - (deadline - (a.timeout_ms || 180000)), ping: p }, null, 2));
+            process.exit(0);
+        }
+    }
+    console.error(JSON.stringify({ ok: false, error: "bridge did not come up in time; check plugins/agent-bridge/bridge.log inside the project" }, null, 2));
+    process.exit(5);
+}
+
 if (!cmd || cmd === "-h" || cmd === "--help") {
     console.log(`fgui-agent-bridge CLI
 

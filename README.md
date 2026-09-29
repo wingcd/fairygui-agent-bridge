@@ -43,6 +43,18 @@ scripts/install.sh  /d/work/my-ui-project     # macOS / Linux
 curl -X POST http://localhost:7531/ -d "{\"cmd\":\"ping\"}"
 ```
 
+**编辑器没开？一条命令拉起并等就绪**（AI 工作流入口）：
+
+```bash
+node cli/fgui.mjs ensure '{"project":"D:/work/my-ui-project"}'
+# 编辑器路径：参数 editor 或环境变量 FGUI_EDITOR_EXE，否则探测常见安装位置
+```
+
+- `ensure`：桥不通就自动启动编辑器（加载 `.fairy` 工程）并轮询到 ping 就绪后返回；已在运行则直接返回
+- `launch`：只启动不等就绪
+
+**关于「无端/headless」**：编辑器命令行 `batchmode` 是**专业版**功能（免费版实测被 `CheckProLicense` 拦截），插件也必须活在编辑器进程里，因此完全无窗口在免费版做不到。替代方案：插件已设置 `Application.runInBackground=true`，编辑器**最小化/失焦也能正常服务**，接近无感运行。
+
 端口默认 7531，改端口：在 `plugins/agent-bridge/` 下放一个 `port.txt`（内容如 `7900`），重启工程生效。
 
 ## 三种用法
@@ -114,13 +126,23 @@ FairyGUI 一个编辑器实例只开一个工程；开多个编辑器窗口编�
 - CLI：`node cli/fgui.mjs discover` 列出所有在线实例及其工程、端口
 - 指定实例：CLI/MCP 设 `FGUI_BRIDGE_URL=http://localhost:7532/`
 
-## 已实测（免费版编辑器）
+## 已实测（免费版编辑器，端到端）
 
-- `publish`：`PublishHandler` 发布成功（171ms，小包），产物与 GUI 手动发布 md5 **逐字节一致**；无专业版拦截
+以下全部在免费版编辑器上通过（Windows，编辑器最小化后台运行）：
+
+- `ensure` 启动器：CLI 拉起编辑器（自动解析 `.fairy` 工程文件）→ 约 3 秒桥就绪
+- `list_packages` / `list_items`：包与资源树正确列出
+- `create_component`：`CreateComponentItem`（Button 扩展）→ id/url/文件路径返回，package.xml 登记
+- `set_property`：`title`/`titleFontSize`（扩展属性通道）、`size`（自动拆 width/height 通道）→ `read_component` XML 验证落盘
+- `insert_object`：跨包引用插入舞台子对象（`n0`），`list_children` 可见
+- `publish`：`PublishHandler` 发布成功（小包 ~165ms），产物与 GUI 手动发布 **md5 逐字节一致**；无专业版拦截
+- `delete_item`：删除测试组件，工程 git 状态还原干净
+- `discover`：多实例注册表（`~/.fgui-agent-bridge/registry.json`）列出端口/pid/工程名
 - 命令行 `batchmode` 发布会被 `CheckProLicense` 挡（专业版功能）——本桥不经过 batchmode，不受影响
-- `create_component` / `insert_object` / `set_property`：走 `CreateComponentItem` / `Document.InsertObject` / `DocElement.SetProperty`，全部主线程执行、可撤销
 
-限制：编辑器需保持打开（可最小化）；仅监听 localhost，无鉴权（不要端口转发到公网）；一次执行一个命令（串行队列，AI 工作流够用）。
+开发中踩过的坑（对二次开发有用）：编辑器 Unity 运行时裁掉了 `Encoding.UTF8.GetBytes(string)` 重载（用 `StreamWriter` 替代）；窗口最小化会暂停主循环（插件设 `runInBackground` 解决）；包对象懒加载（`getPkg` 统一 `EnsureOpen`）；`CreateComponentItem` 的 `path`/`extentionId` 未用时必须传 `null` 而非 `""`。
+
+限制：编辑器需保持运行（可最小化）；仅监听 localhost，无鉴权（不要端口转发到公网）；一次执行一个命令（串行队列，AI 工作流够用）。
 
 ## 状态
 

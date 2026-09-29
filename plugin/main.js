@@ -60,6 +60,9 @@ function getPkg(nameOrId) {
     var p = App.project.GetPackageByName(String(nameOrId));
     if (p == null) p = App.project.GetPackage(String(nameOrId));
     if (p == null) throw "package not found: " + nameOrId;
+    // packages are lazily loaded: the item tree (rootItem.children) is only
+    // populated after EnsureOpen, otherwise it looks empty
+    try { if (!p.opened) p.EnsureOpen(); } catch (e) { plog("EnsureOpen(" + nameOrId + "): " + e); }
     return p;
 }
 
@@ -67,8 +70,9 @@ function itemUrl(pkg, item) { return "ui://" + pkg.id + item.id; }
 
 function findItem(pkg, name, recursiveFrom) {
     var root = recursiveFrom || pkg.rootItem;
-    if (root.name === name) return root;
+    if (root == null || root.name === name) return root;
     var ch = root.children;
+    if (ch == null) return null;
     for (var i = 0; i < ch.Count; i++) {
         var r = findItem(pkg, name, ch.get_Item(i));
         if (r != null) return r;
@@ -172,9 +176,11 @@ COMMANDS.read_component = function (a) {
 
 COMMANDS.create_component = function (a) {
     var pkg = getPkg(a.pkg);
-    var path = a.path || "";
-    var ext = a.extention || "";
+    // both path and extentionId must be null (not "") when unused - the
+    // empty string breaks internal dictionary lookups in CreateComponentItem
+    var path = a.path ? String(a.path) : null;
     var exported = a.exported === undefined ? true : !!a.exported;
+    var ext = a.extention ? String(a.extention) : null;
     var it = pkg.CreateComponentItem(String(a.name), a.width | 0, a.height | 0, path, ext, exported, false);
     pkg.Save();
     return ok({ id: it.id, name: it.name, url: itemUrl(pkg, it), file: it.file });
@@ -297,11 +303,46 @@ function findChild(content, target) {
     return content.GetChild(target);
 }
 
+function setOneProp(obj, k, v) {
+    try {
+        obj.docElement.SetProperty(k, v);
+        return "set";
+    } catch (e1) {
+        try {
+            // extention props (title/icon/... on Button/Label/ProgressBar
+            // extention components) live on a separate setter
+            obj.docElement.SetExtensionProperty(k, v);
+            return "ext";
+        } catch (e2) {
+            // vector-like editor xml attrs may map to scalar props
+            if (typeof v === "string" && v.indexOf(",") >= 0) {
+                var parts = v.split(",");
+                var x = parseInt(parts[0], 10), y = parseInt(parts[1], 10);
+                if (k === "size") {
+                    obj.docElement.SetProperty("width", x);
+                    obj.docElement.SetProperty("height", y);
+                    return "w/h";
+                }
+                if (k === "xy") {
+                    obj.docElement.SetProperty("x", x);
+                    obj.docElement.SetProperty("y", y);
+                    return "x/y";
+                }
+                if (k === "pivot" || k === "anchor" || k === "scale") {
+                    obj.docElement.SetProperty(k + "X", x);
+                    obj.docElement.SetProperty(k + "Y", y);
+                    return k + "X/" + k + "Y";
+                }
+            }
+            throw e2;
+        }
+    }
+}
+
 function applyProps(obj, props) {
     var applied = [];
     for (var k in props) {
-        obj.docElement.SetProperty(k, propValueIn(props[k]));
-        applied.push(k);
+        applied.push(k + ":" + setOneProp(obj, k, propValueIn(props[k])));
     }
     return applied;
 }
@@ -318,9 +359,10 @@ function startPublish(job) {
     handler.add_onComplete(function () {
         job.done = true;
         job.isSuccess = handler.isSuccess;
+        job.exportPath = handler.exportPath;
         try {
             var files = CS.System.IO.Directory.GetFiles(handler.exportPath);
-            for (var i = 0; i < files.Length; i++) job.files.push(files[i]);
+            for (var i = 0; i < files.Length; i++) job.files.push(files.GetValue(i));
         } catch (e) { }
     });
     var t0 = Date.now();
@@ -441,21 +483,26 @@ function readBody(ctx) {
     if (req.ContentLength64 <= 0) return "";
     var ms = new CS.System.IO.MemoryStream();
     req.InputStream.CopyTo(ms);
-    var bytes = ms.ToArray();
-    return CS.System.Text.Encoding.UTF8.GetString(bytes);
+    ms.Position = 0;
+    var sr = new CS.System.IO.StreamReader(ms);
+    var s = sr.ReadToEnd();
+    sr.Close();
+    return s;
 }
 
 function writeResponse(ctx, status, obj) {
     try {
         var resp = ctx.Response;
         var body = JSON.stringify(obj);
-        var bytes = CS.System.Text.Encoding.UTF8.GetBytes(body);
         resp.StatusCode = status;
         resp.ContentType = "application/json; charset=utf-8";
-        resp.ContentLength64 = bytes.Length;
         resp.Headers.Set("Access-Control-Allow-Origin", "*");
-        resp.OutputStream.Write(bytes, 0, bytes.Length);
-        resp.OutputStream.Close();
+        // no ContentLength64 => chunked; avoids Encoding.GetBytes whose
+        // string overload is stripped in the editor's Unity runtime
+        var sw = new CS.System.IO.StreamWriter(resp.OutputStream);
+        sw.Write(body);
+        sw.Flush();
+        sw.Close();
     } catch (e) {
         plog("writeResponse failed (client gone?): " + e);
     }
@@ -535,7 +582,8 @@ function stepQueue() {
     try {
         result = fn(next.args);
     } catch (e) {
-        result = fail(cmd + ": " + (e && e.message ? e.message : e));
+        var stack = e && e.stack ? " | " + String(e.stack).split("\n").slice(0, 4).join(" <- ") : "";
+        result = fail(cmd + ": " + (e && e.message ? e.message : e) + stack);
     }
     writeResponse(next.ctx, 200, result);
 }
@@ -547,6 +595,11 @@ function onUpdate() {
 }
 
 function boot() {
+    // keep the frame loop (and thus the HTTP pump) running when the editor
+    // window loses focus or is minimized - without this Unity pauses
+    try { CS.UnityEngine.Application.runInBackground = true; } catch (e) {
+        plog("runInBackground not settable: " + e);
+    }
     if (App.project != null) {
         startServer();
     } else {
