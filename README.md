@@ -126,6 +126,22 @@ FairyGUI 一个编辑器实例只开一个工程；开多个编辑器窗口编�
 - CLI：`node cli/fgui.mjs discover` 列出所有在线实例及其工程、端口
 - 指定实例：CLI/MCP 设 `FGUI_BRIDGE_URL=http://localhost:7532/`
 
+### 按请求选择工程（多项目推荐）
+
+MCP 新增 `discover_projects`，返回每个在线窗口的工程绝对路径、端口和包名。所有编辑器工具都接受 `project`、`port` 或 `bridge_url`，无需修改 MCP 配置或重连即可操作不同窗口：
+
+```text
+discover_projects {}
+publish {"project":"H:/games/Storm/fairygui","pkg":"StormRacing"}
+read_component {"project":"H:/games/Other/fairygui","pkg":"Common","name":"Button"}
+```
+
+CLI 同样支持：`node cli/fgui.mjs publish '{"project":"H:/games/Storm/fairygui","pkg":"StormRacing"}'`。`project` 可以是目录、`.fairy` 文件或唯一工程名；同名工程必须用绝对路径区分。多个窗口在线却未指定目标时，返回明确错误，不会随便操作第一个窗口。环境变量仍兼容。
+
+`ensure` / `launch` 会先核对目标工程，已有其他工程不能算目标已打开；新进程就绪后也只匹配目标。插件使用独立的 `~/.fgui-agent-bridge/instances/<pid>.json` 注册文件，避免多个窗口同时启动覆盖共享注册表。旧版本插件仍可通过 `registry.json` 发现；新项目复制最新 `plugin/main.js`。MCP 工具列表更新后需要重新连接一次客户端。
+
+回归检查：`node scripts/test_instances.mjs`。真实多窗口编辑和发布还需以编辑器在线结果验收；编辑器自身启动崩溃与 HTTP 路由是不同问题。
+
 ## 已实测（免费版编辑器，端到端）
 
 以下全部在免费版编辑器上通过（Windows，编辑器最小化后台运行）：

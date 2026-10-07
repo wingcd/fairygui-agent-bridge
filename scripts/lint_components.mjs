@@ -38,6 +38,11 @@ for (const pkgDir of fs.readdirSync(assetsDir)) {
     if (!id) continue;
     if (byId.has(id)) { console.log(`✗ ${pkgDir}/package.xml: id 重复 ${id}`); problems++; }
     byId.set(id, name || '');
+    // FairyGUI 发布只收 exported="true" 的资源——缺这个 = 加载正常但发布静默丢（组件丢失事故）
+    if (!/exported="true"/.test(e)) {
+      console.log(`✗ ${pkgDir}/package.xml: ${e.slice(1, 30)}... 缺 exported="true"（发布会被静默丢弃）`);
+      problems++;
+    }
     if (e.startsWith('<image') && name && !name.endsWith('.png')) {
       console.log(`✗ ${pkgDir}/package.xml: image name 缺 .png 后缀 "${name}"（refresh 会重复导入）`);
       problems++;

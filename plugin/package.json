@@ -2,7 +2,7 @@
 	"name": "com.fgui.bridge.agent",
 	"displayName": "FairyGUI Agent Bridge",
 	"description": "HTTP command bridge for AI agents: create/modify components, publish packages",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"author": {
 		"name": "fgui-agent-bridge contributors"
 	},

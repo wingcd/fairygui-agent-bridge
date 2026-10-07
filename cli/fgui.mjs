@@ -13,6 +13,7 @@
 //   FGUI_BRIDGE_URL   default http://localhost:7531/
 
 import process from "node:process";
+import { discover, route, request, stripSelector } from './instances.mjs';
 
 const BASE = process.env.FGUI_BRIDGE_URL || "http://localhost:7531/";
 
@@ -20,37 +21,7 @@ const [cmd, ...rest] = process.argv.slice(2);
 
 // discover: list all running bridge instances across projects (no editor needed)
 if (cmd === "discover") {
-    const os = await import("node:os");
-    const fs = await import("node:fs");
-    const path = await import("node:path");
-    const regPath = path.join(os.homedir(), ".fgui-agent-bridge", "registry.json");
-    let entries = [];
-    try {
-        entries = JSON.parse(fs.readFileSync(regPath, "utf8"));
-    } catch {
-        entries = [];
-    }
-    const alive = [];
-    for (const e of entries) {
-        try {
-            process.kill(e.pid, 0); // liveness probe, signal 0
-        } catch {
-            continue; // stale entry
-        }
-        let ping = null;
-        try {
-            const r = await fetch(`http://localhost:${e.port}/`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ cmd: "ping" }),
-            });
-            ping = await r.json();
-        } catch {
-            continue; // not answering
-        }
-        alive.push({ port: e.port, pid: e.pid, project: ping?.data?.project || e.project, url: `http://localhost:${e.port}/` });
-    }
-    console.log(JSON.stringify({ ok: true, registry: regPath, instances: alive }, null, 2));
+    console.log(JSON.stringify({ok: true, instances: await discover()}, null, 2));
     process.exit(0);
 }
 
@@ -76,10 +47,18 @@ if (cmd === "launch" || cmd === "ensure") {
         }
     };
 
-    const alive = async () => ping(BASE);
+    const alive = async () => {
+        try { const instance = await route({project: a.project, port: a.port, bridge_url: a.bridge_url});
+            return {...await ping(instance.url), instance}; } catch { return null; }
+    };
 
-    if (cmd === "ensure" && (await alive())?.ok) {
-        console.log(JSON.stringify({ ok: true, already: true, ping: await alive() }, null, 2));
+    if (!a.project) {
+        console.error(JSON.stringify({ok: false, error: 'args.project is required; ensure never reuses an unrelated editor'}));
+        process.exit(4);
+    }
+    const existing = await alive();
+    if (existing?.ok) {
+        console.log(JSON.stringify({ ok: true, already: true, ping: existing }, null, 2));
         process.exit(0);
     }
 
@@ -121,8 +100,8 @@ if (cmd === "launch" || cmd === "ensure") {
     let proj = project;
     if (!proj.toLowerCase().endsWith(".fairy")) {
         const found = fs.readdirSync(proj).filter((f) => f.toLowerCase().endsWith(".fairy"));
-        if (found.length === 0) {
-            console.error(JSON.stringify({ ok: false, error: `no .fairy file found in ${proj}` }, null, 2));
+        if (found.length !== 1) {
+            console.error(JSON.stringify({ ok: false, error: `expected one .fairy file in ${proj}; found ${found.length}, pass the exact file path` }, null, 2));
             process.exit(4);
         }
         proj = path.join(proj, found[0]);
@@ -134,11 +113,20 @@ if (cmd === "launch" || cmd === "ensure") {
     const extra = Array.isArray(a.args) ? a.args.map(String) : [];
     const child = isMacApp
         ? spawn("open", ["-a", editor, proj], { detached: true, stdio: "ignore" })
-        : spawn(editor, [proj, ...extra], { detached: true, stdio: "ignore" });
+        : spawn(editor, [proj, ...extra], { detached: true, stdio: "ignore", windowsHide: true, cwd: path.dirname(editor) });
+    let exited = null;
+    child.on('exit', (code, signal) => { exited = {code, signal}; });
+    try {
+        await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+    } catch (error) {
+        console.error(JSON.stringify({ok:false,error:`Editor launch failed: ${error.message}`}));
+        process.exit(4);
+    }
     child.unref();
 
     if (cmd === "launch") {
-        console.log(JSON.stringify({ ok: true, launched: editor, project }, null, 2));
+        console.log(JSON.stringify({ ok: true, launched: editor, project: proj, pid: child.pid,
+            ready: false, message: 'Process created; use ensure/discover to verify the target project bridge' }, null, 2));
         process.exit(0);
     }
 
@@ -150,6 +138,10 @@ if (cmd === "launch" || cmd === "ensure") {
         if (p?.ok) {
             console.log(JSON.stringify({ ok: true, launched: editor, waitedMs: Date.now() - (deadline - (a.timeout_ms || 180000)), ping: p }, null, 2));
             process.exit(0);
+        }
+        if (!isMacApp && exited) {
+            console.error(JSON.stringify({ok:false,error:'Editor exited before the target project bridge became ready',project:proj,...exited}));
+            process.exit(5);
         }
     }
     console.error(JSON.stringify({ ok: false, error: "bridge did not come up in time; check plugins/agent-bridge/bridge.log inside the project" }, null, 2));
@@ -186,12 +178,8 @@ env:
 const args = rest.length ? JSON.parse(rest.join(" ")) : {};
 
 try {
-    const res = await fetch(BASE, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cmd: cmd.replace(/-/g, "_"), args }),
-    });
-    const json = await res.json();
+    const instance = await route(args);
+    const json = await request(instance.url, cmd.replace(/-/g, "_"), stripSelector(args), Math.max(10000, (Number(args.timeout_ms) || 45000) + 5000));
     console.log(JSON.stringify(json, null, 2));
     process.exit(json.ok ? 0 : 2);
 } catch (e) {

@@ -14,7 +14,7 @@
 // Protocol: POST with JSON body  {"cmd": "<command>", "args": {...}}
 // Response: JSON {"ok": true, "data": ...} or {"ok": false, "error": "..."}
 
-var VERSION = "0.1.0";
+var VERSION = "0.2.0";
 
 var FairyGUI = CS.FairyGUI;
 var FairyEditor = CS.FairyEditor;
@@ -152,6 +152,8 @@ COMMANDS.ping = function (a) {
         version: VERSION,
         editor: "FairyGUI",
         port: Bridge.port,
+        pid: CS.System.Diagnostics.Process.GetCurrentProcess().Id,
+        projectPath: projectDirectory(),
         projectOpen: App.project != null,
         project: projectLabel()
     });
@@ -161,6 +163,7 @@ COMMANDS.project_info = function (a) {
     if (App.project == null) throw "no project open";
     var p = App.project;
     var d = { port: Bridge.port, packages: p.allPackages.Count, packageNames: [] };
+    d.projectPath = projectDirectory();
     try { d.name = p.name; } catch (e) { }
     try { d.path = p.projectPath; } catch (e) { }
     for (var i = 0; i < p.allPackages.Count; i++) {
@@ -471,16 +474,33 @@ function registryRegister(port) {
         port: port,
         pid: myPid,
         project: projectLabel(),
+        projectPath: projectDirectory(),
         startedAt: new Date().toISOString()
     };
     arr.push(entry);
+    // Independent files avoid lost registrations when two editors start together.
+    try {
+        var folder = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances';
+        CS.System.IO.Directory.CreateDirectory(folder);
+        CS.System.IO.File.WriteAllText(folder + '/' + myPid + '.json', JSON.stringify(entry));
+    } catch (e) { plog('instance registration failed: ' + e); }
     registryWrite(arr);
     return entry;
 }
 
 function registryUnregister() {
-    var arr = registryRead().filter(function (e) { return processAlive(e.pid); });
+    var myPid = CS.System.Diagnostics.Process.GetCurrentProcess().Id;
+    var arr = registryRead().filter(function (e) { return e.pid !== myPid && processAlive(e.pid); });
     registryWrite(arr);
+    try {
+        var file = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances/' + myPid + '.json';
+        if (CS.System.IO.File.Exists(file)) CS.System.IO.File.Delete(file);
+    } catch (e) { }
+}
+
+function projectDirectory() {
+    // The plugin is installed at <project>/plugins/agent-bridge.
+    return String(CS.System.IO.Path.GetFullPath(PluginDir + '/../..')).replace(/\\/g, '/');
 }
 
 function projectLabel() {

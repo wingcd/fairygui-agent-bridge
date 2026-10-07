@@ -9,6 +9,7 @@
 
 import process from "node:process";
 import readline from "node:readline";
+import { discover, route, request, stripSelector } from '../cli/instances.mjs';
 
 const BASE = process.env.FGUI_BRIDGE_URL || "http://localhost:7531/";
 
@@ -21,6 +22,10 @@ const obj = (properties, required) => ({
 const S = String;
 
 const TOOLS = {
+    discover_projects: {
+        description: 'List all online FairyGUI editor projects with absolute paths and ports. Each editor command accepts project, port, or bridge_url.',
+        inputSchema: obj({}),
+    },
     ping: {
         description: "Check the bridge and editor status. Start here.",
         inputSchema: obj({}),
@@ -152,15 +157,21 @@ const TOOLS = {
     },
 };
 
+for (const [name, tool] of Object.entries(TOOLS)) {
+    if (name === 'discover_projects') continue;
+    Object.assign(tool.inputSchema.properties, {
+        project: {type: 'string', description: 'Target project absolute directory/.fairy path (recommended), or unique project name'},
+        port: {type: 'integer', minimum: 1, maximum: 65535, description: 'Target editor bridge port'},
+        bridge_url: {type: 'string', description: 'Target localhost bridge URL'},
+    });
+}
+
 // ---- bridge call ----
 
 async function callBridge(cmd, args) {
-    const res = await fetch(BASE, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cmd, args }),
-    });
-    return await res.json();
+    if (cmd === 'discover_projects') return {ok: true, data: await discover()};
+    const instance = await route(args);
+    return request(instance.url, cmd, stripSelector(args), Math.max(10000, (Number(args.timeout_ms) || 45000) + 5000));
 }
 
 // ---- JSON-RPC over stdio ----
@@ -192,7 +203,7 @@ rl.on("line", async (line) => {
                 result: {
                     protocolVersion: "2024-11-05",
                     capabilities: { tools: {} },
-                    serverInfo: { name: "fgui-agent-bridge", version: "0.1.0" },
+                    serverInfo: { name: "fgui-agent-bridge", version: "0.2.0" },
                 },
             });
         } else if (req.method === "tools/list") {
@@ -246,4 +257,4 @@ rl.on("line", async (line) => {
     }
 });
 
-process.stderr.write(`[fgui-agent-bridge mcp] forwarding to ${BASE}\n`);
+process.stderr.write(`[fgui-agent-bridge mcp] per-request project routing (default hint ${BASE})\n`);
