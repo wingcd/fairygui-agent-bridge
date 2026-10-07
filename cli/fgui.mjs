@@ -113,7 +113,7 @@ if (cmd === "launch" || cmd === "ensure") {
     const extra = Array.isArray(a.args) ? a.args.map(String) : [];
     const child = isMacApp
         ? spawn("open", ["-a", editor, proj], { detached: true, stdio: "ignore" })
-        : spawn(editor, [proj, ...extra], { detached: true, stdio: "ignore", windowsHide: true, cwd: path.dirname(editor) });
+        : spawn(editor, [proj, ...extra], { detached: true, stdio: "ignore", windowsHide: a.visible !== true, cwd: path.dirname(editor) });
     let exited = null;
     child.on('exit', (code, signal) => { exited = {code, signal}; });
     try {

@@ -152,7 +152,6 @@ COMMANDS.ping = function (a) {
         version: VERSION,
         editor: "FairyGUI",
         port: Bridge.port,
-        pid: CS.System.Diagnostics.Process.GetCurrentProcess().Id,
         projectPath: projectDirectory(),
         projectOpen: App.project != null,
         project: projectLabel()
@@ -459,20 +458,12 @@ function registryWrite(arr) {
     } catch (e) { plog("registry write failed: " + e); }
 }
 
-function processAlive(pid) {
-    if (!pid) return false;
-    try {
-        var p = CS.System.Diagnostics.Process.GetProcessById(pid);
-        return p != null && !p.HasExited;
-    } catch (e) { return false; }
-}
-
 function registryRegister(port) {
-    var myPid = CS.System.Diagnostics.Process.GetCurrentProcess().Id;
-    var arr = registryRead().filter(function (e) { return processAlive(e.pid) && e.pid !== myPid; });
+    // System.Diagnostics.Process reflection can crash the stripped Unity build.
+    // HTTP discovery proves liveness; the editor only records its own endpoint.
+    var arr = registryRead().filter(function (e) { return e.port !== port; });
     var entry = {
         port: port,
-        pid: myPid,
         project: projectLabel(),
         projectPath: projectDirectory(),
         startedAt: new Date().toISOString()
@@ -482,25 +473,25 @@ function registryRegister(port) {
     try {
         var folder = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances';
         CS.System.IO.Directory.CreateDirectory(folder);
-        CS.System.IO.File.WriteAllText(folder + '/' + myPid + '.json', JSON.stringify(entry));
+        CS.System.IO.File.WriteAllText(folder + '/' + port + '.json', JSON.stringify(entry));
     } catch (e) { plog('instance registration failed: ' + e); }
     registryWrite(arr);
     return entry;
 }
 
 function registryUnregister() {
-    var myPid = CS.System.Diagnostics.Process.GetCurrentProcess().Id;
-    var arr = registryRead().filter(function (e) { return e.pid !== myPid && processAlive(e.pid); });
+    var arr = registryRead().filter(function (e) { return e.port !== Bridge.port; });
     registryWrite(arr);
     try {
-        var file = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances/' + myPid + '.json';
+        var file = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances/' + Bridge.port + '.json';
         if (CS.System.IO.File.Exists(file)) CS.System.IO.File.Delete(file);
     } catch (e) { }
 }
 
 function projectDirectory() {
     // The plugin is installed at <project>/plugins/agent-bridge.
-    return String(CS.System.IO.Path.GetFullPath(PluginDir + '/../..')).replace(/\\/g, '/');
+    // Avoid additional native Path overloads in the stripped Unity editor build.
+    return String(PluginDir).replace(/\\/g, '/').replace(/\/$/, '').split('/').slice(0, -2).join('/');
 }
 
 function projectLabel() {
@@ -670,8 +661,14 @@ function boot() {
     try {
         var toolMenu = App.menu.GetSubMenu("tool");
         toolMenu.AddItem("Agent bridge: restart server", "agentbridge_restart", function () {
+            if (Bridge.current != null) {
+                plog('restart deferred: a command is still running');
+                return;
+            }
+            try { if (Bridge.listener != null) Bridge.listener.Close(); } catch (e) { }
             Bridge.listener = null;
             Bridge.pendingAccept = null;
+            try { registryUnregister(); } catch (e) { }
             startServer();
         });
     } catch (e) {
