@@ -66,7 +66,15 @@ function getPkg(nameOrId) {
     return p;
 }
 
-function itemUrl(pkg, item) { return "ui://" + pkg.id + item.id; }
+function itemUrl(pkg, item) {
+    // Encoded item URLs reserve exactly eight characters for the package ID.
+    // A short handmade package ID silently eats the beginning of the item ID.
+    if (String(pkg.id).length !== 8) {
+        throw "invalid package id '" + pkg.id + "' in package '" + pkg.name +
+            "': FairyGUI encoded URLs require 8 characters; repair package.xml and its ui:// references before editing";
+    }
+    return "ui://" + pkg.id + item.id;
+}
 
 function findItem(pkg, name, recursiveFrom) {
     var root = recursiveFrom || pkg.rootItem;
@@ -90,8 +98,21 @@ function ensureDocOpen(pkg, compName) {
     var item = requireComponentItem(pkg, compName);
     var url = itemUrl(pkg, item);
     var doc = App.docView.FindDocument(url);
-    if (doc == null) doc = App.docView.OpenDocument(url, true);
-    if (doc == null) throw "failed to open document: " + compName;
+    if (doc == null) {
+        // Installed editor.d.ts declares URL overloads only, not FPackageItem.
+        var attempts = [
+            function () { return App.docView.OpenDocument(url, true); },
+            function () { return App.docView.OpenDocument(url); },
+        ];
+        var lastErr = null;
+        for (var i = 0; i < attempts.length && doc == null; i++) {
+            try {
+                doc = attempts[i]();
+                if (doc == null) doc = App.docView.FindDocument(url);
+            } catch (e) { lastErr = e; plog("OpenDocument#" + i + " " + compName + ": " + e); }
+        }
+        if (doc == null) throw "failed to open document: " + compName + (lastErr ? (" (last: " + lastErr + ")") : "");
+    }
     return { doc: doc, item: item, url: url };
 }
 
@@ -176,6 +197,9 @@ COMMANDS.read_component = function (a) {
 
 COMMANDS.create_component = function (a) {
     var pkg = getPkg(a.pkg);
+    if (String(pkg.id).length !== 8) itemUrl(pkg, { id: "" });
+    if (!(a.width > 0 && a.height > 0)) throw "positive component width and height required";
+    if (!a.name || findItem(pkg, String(a.name))) throw "component name missing or already exists: " + a.name;
     // both path and extentionId must be null (not "") when unused - the
     // empty string breaks internal dictionary lookups in CreateComponentItem
     var path = a.path ? String(a.path) : null;
@@ -183,7 +207,9 @@ COMMANDS.create_component = function (a) {
     var ext = a.extention ? String(a.extention) : null;
     var it = pkg.CreateComponentItem(String(a.name), a.width | 0, a.height | 0, path, ext, exported, false);
     pkg.Save();
-    return ok({ id: it.id, name: it.name, url: itemUrl(pkg, it), file: it.file });
+    // Do not report a usable component until the editor can load its document.
+    var opened = ensureDocOpen(pkg, it.name);
+    return ok({ id: it.id, name: it.name, url: opened.url, file: it.file, openable: true });
 };
 
 COMMANDS.delete_item = function (a) {
@@ -287,8 +313,22 @@ COMMANDS.refresh = function (a) {
 
 COMMANDS.screenshot = function (a) {
     if (!a.path) throw "args.path required (absolute png path)";
-    CS.UnityEngine.ScreenCapture.Screenshot(a.path);
-    return ok({ screenshot: a.path });
+    // 注意：被 Unity 裁剪的方法在 Jint 里可能暴露为 truthy 但不可调用，
+    // typeof/真值守卫都会漏，必须 try/catch 实调
+    var sc = null;
+    try { sc = CS.UnityEngine.ScreenCapture; } catch (e) {}
+    var last = null;
+    if (sc) {
+        try {
+            sc.CaptureScreenshotAsFile(String(a.path)); // 同步写盘
+            return ok({ screenshot: a.path });
+        } catch (e1) { last = e1; plog("screenshot: CaptureScreenshotAsFile failed: " + e1); }
+        try {
+            sc.CaptureScreenshot(String(a.path)); // 异步：帧末写盘
+            return ok({ screenshot: a.path, async: true });
+        } catch (e2) { last = e2; plog("screenshot: CaptureScreenshot failed: " + e2); }
+    }
+    throw "ScreenCapture API unavailable in this editor build (" + last + "); use OS-level window capture (e.g. PowerShell CopyFromScreen) instead";
 };
 
 // internal for tests: expose bridge log tail

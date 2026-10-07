@@ -142,6 +142,13 @@ FairyGUI 一个编辑器实例只开一个工程；开多个编辑器窗口编�
 
 开发中踩过的坑（对二次开发有用）：编辑器 Unity 运行时裁掉了 `Encoding.UTF8.GetBytes(string)` 重载（用 `StreamWriter` 替代）；窗口最小化会暂停主循环（插件设 `runInBackground` 解决）；包对象懒加载（`getPkg` 统一 `EnsureOpen`）；`CreateComponentItem` 的 `path`/`extentionId` 未用时必须传 `null` 而非 `""`。
 
+v0.1.1 追加（2026-10 实测）：
+
+- **`OpenDocument` 不可靠**：本编辑器构建里 `App.docView.OpenDocument(url, true)` 静默返回 null、`OpenDocument(item)` 抛 "overload is striped by unity"——程序化开文档不通。`read_component` 是直接 `File.ReadAllText` 读盘上 XML，**不代表编辑器能打开该组件**（XML 非法如重复属性，编辑器双击仍会炸错误框；手写 XML 必须先 lint 重复属性）。
+- **`screenshot` 的 `ScreenCapture` 系列也被裁**：且 Jint 里被裁方法可能暴露为 *truthy 但不可调用*，`typeof`/真值守卫拦不住，必须 try/catch 实调（已实现）。此构建下该命令明确报错，用 OS 级窗口截屏（PowerShell `PrintWindow`/`CopyFromScreen`）替代。
+- **`launch`/`ensure` 新增 `args.args` 透传**：如 `{"project":"...","args":["-screen-width","1440","-screen-height","960"]}`；编辑器窗口尺寸 Unity 每帧自管，外部 `SetWindowPos` 无效，窗口畸形只能带参数重启解决。
+- **手写 XML 的 8 位色坑**：`#RRGGBBAA` 运行时可能只取后 6 位（`#000000c8`→纯蓝 `(0,0,200)`），组件里用 6 位色 + `alpha="0.x"` 属性组合。
+
 限制：编辑器需保持运行（可最小化）；仅监听 localhost，无鉴权（不要端口转发到公网）；一次执行一个命令（串行队列，AI 工作流够用）。
 
 ## 状态

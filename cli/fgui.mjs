@@ -130,9 +130,11 @@ if (cmd === "launch" || cmd === "ensure") {
     proj = path.resolve(proj);
 
     const isMacApp = editor.endsWith(".app");
+    // args.args: 透传给编辑器的额外命令行（如 ["-screen-width","1400","-screen-height","900"]）
+    const extra = Array.isArray(a.args) ? a.args.map(String) : [];
     const child = isMacApp
         ? spawn("open", ["-a", editor, proj], { detached: true, stdio: "ignore" })
-        : spawn(editor, [proj], { detached: true, stdio: "ignore" });
+        : spawn(editor, [proj, ...extra], { detached: true, stdio: "ignore" });
     child.unref();
 
     if (cmd === "launch") {
