@@ -68,7 +68,7 @@ for (const pkgDir of fs.readdirSync(assetsDir)) {
       for (const r of line.matchAll(/(?:src|url)="([^"]+)"/g)) {
         const v = r[1];
         if (v.startsWith('ui://')) {
-          if (v.includes('/')) { console.log(`✗ ${rel}:${ln} ui:// 格式为 pkgId+itemId 直连无斜杠：${v}`); problems++; }
+          if (v.slice(5).includes('/')) { console.log(`✗ ${rel}:${ln} ui:// 格式为 pkgId+itemId 直连无斜杠：${v}`); problems++; }
           const id = v.slice(5).replace(pkgId, '');
           if (!byId.has(id)) { console.log(`✗ ${rel}:${ln} 引用缺失 ${v}（itemId ${id} 不在 ${pkgDir}/package.xml）`); problems++; }
         } else if (/^[0-9a-z]{5,8}$/i.test(v) && !byId.has(v)) {
