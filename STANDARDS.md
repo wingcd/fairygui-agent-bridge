@@ -21,9 +21,10 @@ assets/<pkg>/
 
 ## 2. 组件化纪律
 
+- **禁止把所有资源塞进一个组件**：一个组件只承担一个职责——一个页面、一个复用件或一个 cell。把全部图片、全部页面、全部状态堆进一个 XML 的后果：没法按功能复用和修改、优化无从下手、加载/发布体积失控、编辑器打开卡顿。资源分层放：图片进 `images/` 按用途分组，组件按功能建文件夹（见 §1），页面之间靠引用组合，不靠"全塞一起"。
 - **复用件一律抽组件放 `common/`**：按钮（底图+文字）、面板框（九宫格底+内阴影）、标签页、底栏、货币条……第二次出现就必须抽。
 - **页面组件只做布局装配**：引用 common 件 + 页面私有件，不放重复的裸 image+text 组合。
-- 单组件显示对象建议 ≤ 80 个（超过说明该拆 cell/子组件）。
+- 单组件显示对象建议 ≤ 80 个（超过说明该拆 cell/子组件，lint ⚠ 提醒）。
 - 动态重复结构（背包格子、商店卡片）用 `list`（`layout="flow_hz"` + `defaultItem`）+ 独立 cell 组件，禁止在页面里平铺 N 份。
 - 子对象用语义名（`btnHome`/`capText`），禁止裸 `n0/n1`；扩展件遵守内置名约定（Button 的 `title`/`icon`）。
 
@@ -49,7 +50,41 @@ FairyGUI 编辑器/运行时已内置的能力**直接用配置表达**，禁止
 
 > 判断标准：想动图片本身（裁/染/缩/切）之前，先查引擎有没有配置项——有就必须用配置。九宫格是重灾区：任何"把图切一下"的念头都先去 package.xml 写 `scale9grid`。
 
+## 2.6 类型白名单（创建前先选型，禁止发明类型）
 
+**动手创建任何对象之前，先判断它对应 FairyGUI 支持的哪一种类型，按支持的类型创建。** FairyGUI 的对象类型是封闭集合——不在集合内的标签编辑器不认识，轻则解析丢对象，重则整个组件打不开。依据：官方编辑器自身工程（FairyGUI-Editor 仓库 288 个 XML）全量普查 + 官方 demo 交叉验证。
+
+**displayList 里能放的显示对象标签只有 10 种：**
+
+| 标签 | 类型 | 用途 / 备注 |
+|---|---|---|
+| `image` | GImage | 静态图集图片（`src=` 指向 package.xml 登记的图） |
+| `graph` | GGraph | 几何色块/占位框/命中区 |
+| `loader` | GLoader | 运行时动态加载（图标/头像/跨包内容） |
+| `loader3D` | GLoader3D | 3D/骨骼内容（Spine、DragonBones） |
+| `text` | GTextField | 文本；**加 `input="true"` 即输入框**（配 `prompt`/`maxLength`） |
+| `richtext` | GRichTextField | 富文本（UBB/链接/内嵌图） |
+| `list` | GList | 列表（内联 `item` 子项 + `defaultItem`） |
+| `component` | GComponent | 引用其他组件资源（`src=`） |
+| `jta` | GMovieClip | 序列帧动画（资源文件就是 .jta） |
+| `group` | GGroup | 组（虚拟容器，整体移动/显隐） |
+
+**高频发明错误（标签根本不存在，✗ lint 拦截）：**
+
+| 想要的 | 正确写法 | ❌ 错误发明 |
+|---|---|---|
+| 输入框 | `<text input="true" prompt="请输入"/>` | `<inputtext>`（ObjectType 叫 InputText，但 XML 标签就是 text+input） |
+| 序列帧动画 | `<jta src="…"/>` | `<movieclip>`（movieclip 只在 package.xml 里作资源登记标签，不上舞台） |
+| 复选框/单选 | Button 扩展 + `<Button mode="Check"/>`（见 §2.5） | `<checkbox>`/`<radio>` |
+| 通用容器/视图 | `<component>`（或抽独立组件再引用） | `<view>`/`<panel>`/`<div>`/`<sprite>` |
+
+**组件扩展 `extention`（根元素属性）合法值只有 8 种：**
+
+`Button` / `Label` / `ComboBox` / `ProgressBar` / `Slider` / `ScrollBar` / `List` / `Tree`（不写 = 普通组件）
+
+- 注意拼写就是 **`extention`**（FairyGUI 官方就这么拼，不是 `extension`——写错编辑器静默忽略，组件退化为普通组件）。
+- 没有 CheckBox/Radio 扩展——它们是 Button 的 mode。
+- 选型顺序：先查 §2.5 引擎能力表（有没有现成配置项），再查本表（用哪种对象承载）。
 
 ## 3. XML 硬规矩（✗ 阻断项，lint 机器查）
 
@@ -63,6 +98,8 @@ FairyGUI 编辑器/运行时已内置的能力**直接用配置表达**，禁止
 | package.xml image 的 `name` 必须带 `.png` | 不带后缀 refresh 会整包重复导入 |
 | `src=` 裸 itemId、`url=` 完整 `ui://` | 两者格式不同，混用解析失败 |
 | 组件 id 序列：图片 `b000NN`、组件 `c000NN` | 与编辑器生成风格一致，避免碰撞 |
+| displayList 对象标签只允许 §2.6 的 10 种 | 发明的标签（inputtext/movieclip/checkbox/view…）编辑器解析丢对象或组件打不开 |
+| `extention` 只允许 §2.6 的 8 种合法值（且拼写是 extention） | 不存在的扩展（如 CheckBox）创建/加载失败 |
 | 编辑器开着时禁止手写 package.xml | refresh 用内存态覆盖盘上（登记必须：关编辑器→写盘→重启加载） |
 
 ## 4. 坐标与真值

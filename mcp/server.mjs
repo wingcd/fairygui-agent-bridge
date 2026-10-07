@@ -64,7 +64,9 @@ const TOOLS = {
     },
     create_component: {
         description:
-            "Create a new component in a package (CreateComponentItem). extention: Button/Label/ProgressBar/Slider/ComboBox/List/Tree etc.",
+            "Create a new component in a package (CreateComponentItem). Only FairyGUI-supported types: " +
+            "extention must be one of Button/Label/ComboBox/ProgressBar/Slider/ScrollBar/List/Tree (or omit for a plain component; " +
+            "CheckBox/Radio do NOT exist - they are Button mode Check/Radio). Split by responsibility - never dump all resources into one component (STANDARDS 2/2.6).",
         inputSchema: obj(
             {
                 pkg: { type: S("string") },
@@ -72,7 +74,7 @@ const TOOLS = {
                 width: { type: S("number") },
                 height: { type: S("number") },
                 path: { type: S("string"), description: "folder path inside package, '' = root" },
-                extention: { type: S("string") },
+                extention: { type: S("string"), description: "Button/Label/ComboBox/ProgressBar/Slider/ScrollBar/List/Tree" },
                 exported: { type: S("boolean") },
             },
             ["pkg", "name", "width", "height"],
