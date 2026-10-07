@@ -14,6 +14,7 @@
  *   6. 发明类型标签    —— displayList 对象标签不在 10 种白名单内（编辑器解析丢对象/组件打不开）
  *   7. 非法 extention  —— 组件扩展值不在 8 种合法值内（CheckBox/Radio/View… 都不存在）
  *   8. 对象数超限      —— 警告：单组件显示对象 > 80（资源堆一个组件，该拆 cell/子组件）
+ *   9. 九宫格越界      —— scale9grid 格式非法或中心区超出图片实际尺寸（读 png 头对账，STANDARDS §2.7）
  *
  * 白名单依据：官方编辑器自身工程（fairygui/FairyGUI-Editor 仓库 288 个 XML）全量普查
  * + 官方 demo 工程交叉验证，见 STANDARDS.md §2.6。
@@ -34,6 +35,21 @@ const STRUCT_TAGS = new Set([
 const KNOWN_TAGS = new Set([...OBJ_TAGS, ...STRUCT_TAGS]);
 // 根元素 extention 合法值（无 CheckBox/Radio——那是 Button 的 mode）
 const EXTENTIONS = new Set(['Button', 'Label', 'ComboBox', 'ProgressBar', 'Slider', 'ScrollBar', 'List', 'Tree']);
+
+// 读 PNG IHDR 取宽高（文件缺失/非 png 返回 null，跳过越界检查）
+function pngSize(file) {
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(24);
+      if (fs.readSync(fd, buf, 0, 24, 0) !== 24) return null;
+      if (buf.readUInt32BE(0) !== 0x89504e47) return null; // PNG 签名
+      return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch { return null; }
+}
 
 const root = path.resolve(process.argv[2] || '.');
 const assetsDir = path.join(root, 'assets');
@@ -64,6 +80,29 @@ for (const pkgDir of fs.readdirSync(assetsDir)) {
     if (e.startsWith('<image') && name && !name.endsWith('.png')) {
       console.log(`✗ ${pkgDir}/package.xml: image name 缺 .png 后缀 "${name}"（refresh 会重复导入）`);
       problems++;
+    }
+    // STANDARDS §2.7：scale9grid 中心区必须在图内——越界格线 = 切错图，拉伸必炸
+    const grid = (e.match(/ scale9grid="([^"]+)"/) || [])[1];
+    if (grid) {
+      const parts = grid.split(',').map(Number);
+      const [gx, gy, gw, gh] = parts;
+      if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+        console.log(`✗ ${pkgDir}/package.xml: scale9grid="${grid}" 非法（须为 4 个整数）`);
+        problems++;
+      } else if (gw < 1 || gh < 1 || gx < 0 || gy < 0) {
+        // 官方编辑器自己会在 svg 图标上写出负值格线（源尺寸/显示尺寸换算怪癖），降为警告
+        console.log(`⚠ ${pkgDir}/package.xml: scale9grid="${grid}" 含负值/零（${name}——svg 上的编辑器怪癖可忽略，手写的须改）`);
+      } else {
+        const p = (e.match(/ path="([^"]+)"/) || [])[1] || '/';
+        const imgFile = path.join(assetsDir, pkgDir, p, name || '');
+        const size = pngSize(imgFile);
+        if (size) {
+          if (gx + gw > size.w || gy + gh > size.h) {
+            console.log(`✗ ${pkgDir}/package.xml: ${name} scale9grid="${grid}" 越界（图实际 ${size.w}x${size.h}，中心区必须整块落在图内）`);
+            problems++;
+          }
+        }
+      }
     }
   }
 
