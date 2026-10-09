@@ -152,6 +152,7 @@ COMMANDS.ping = function (a) {
         version: VERSION,
         editor: "FairyGUI",
         port: Bridge.port,
+        pid: CS.System.Diagnostics.Process.GetCurrentProcess().Id,
         projectPath: projectDirectory(),
         projectOpen: App.project != null,
         project: projectLabel()
@@ -458,12 +459,20 @@ function registryWrite(arr) {
     } catch (e) { plog("registry write failed: " + e); }
 }
 
+function processAlive(pid) {
+    if (!pid) return false;
+    try {
+        var p = CS.System.Diagnostics.Process.GetProcessById(pid);
+        return p != null && !p.HasExited;
+    } catch (e) { return false; }
+}
+
 function registryRegister(port) {
-    // System.Diagnostics.Process reflection can crash the stripped Unity build.
-    // HTTP discovery proves liveness; the editor only records its own endpoint.
-    var arr = registryRead().filter(function (e) { return e.port !== port; });
+    var myPid = CS.System.Diagnostics.Process.GetCurrentProcess().Id;
+    var arr = registryRead().filter(function (e) { return processAlive(e.pid) && e.pid !== myPid; });
     var entry = {
         port: port,
+        pid: myPid,
         project: projectLabel(),
         projectPath: projectDirectory(),
         startedAt: new Date().toISOString()
@@ -473,17 +482,18 @@ function registryRegister(port) {
     try {
         var folder = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances';
         CS.System.IO.Directory.CreateDirectory(folder);
-        CS.System.IO.File.WriteAllText(folder + '/' + port + '.json', JSON.stringify(entry));
+        CS.System.IO.File.WriteAllText(folder + '/' + myPid + '.json', JSON.stringify(entry));
     } catch (e) { plog('instance registration failed: ' + e); }
     registryWrite(arr);
     return entry;
 }
 
 function registryUnregister() {
-    var arr = registryRead().filter(function (e) { return e.port !== Bridge.port; });
+    var myPid = CS.System.Diagnostics.Process.GetCurrentProcess().Id;
+    var arr = registryRead().filter(function (e) { return e.pid !== myPid && processAlive(e.pid); });
     registryWrite(arr);
     try {
-        var file = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances/' + Bridge.port + '.json';
+        var file = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances/' + myPid + '.json';
         if (CS.System.IO.File.Exists(file)) CS.System.IO.File.Delete(file);
     } catch (e) { }
 }
