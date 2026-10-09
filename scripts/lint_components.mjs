@@ -20,11 +20,14 @@
  *  12. 资源 id 字符集  —— package.xml 条目 id 只允许 [0-9a-z]（长度不限：实证 4~13 位都能加载，长度不是加载错误源）
  *  13. 登记存在性      —— package.xml 条目 path+name 指向的文件必须真实存在（移动/删除文件不同步登记，发布丢资源）
  *  14. fileName 对账   —— 警告：组件 XML fileName 与 src 登记路径不一致（编辑器按 src 定位仍可加载，但合并/移动后必须同步）
+ *  15. 组件命名拼装    —— 警告：组件名 >28 字/版本复制后缀/同文件夹同名双登记/单文件夹组件 >25（STANDARDS §2.9）
  *
  * 白名单依据：官方编辑器自身工程（fairygui/FairyGUI-Editor 仓库 288 个 XML）全量普查
  * + 官方 demo 工程交叉验证，见 STANDARDS.md §2.6。id/目录约定依据本机生产工程
- * （挪一挪猪等 5 包 481 条登记）普查实证，见 STANDARDS.md §2.8。
- * 跨包引用（pkg= / ui://他包id）按目标包的 package.xml 对账——11~14 与跨包解析配套。
+ * （挪一挪猪等 5 包 481 条登记）普查实证，见 STANDARDS.md §2.8。跨包引用（pkg= /
+ * ui://他包id）按目标包的 package.xml 对账——11~14 与跨包解析配套。组件命名与
+ * 文件夹隔离依据本机十余生产工程 8 包全量普查（名字主体 7~17 字、全机最长 28、
+ * 同名组件跨文件夹大量合法共存、单文件夹最多 21 个），见 STANDARDS.md §2.9。
  *
  * 退出码：有问题=1（可配合 CI/预提交拦截），干净=0
  */
@@ -116,12 +119,39 @@ for (const [pkgDir, P] of PKGS) {
   const byId = new Map();
   // 带合法九宫格的包内图片：id → {name, file}（loader 装包内图会复制源图 grid，一并纳入缩小检查）
   const gridById = new Map();
+  // STANDARDS §2.9：组件名不拼装变长——版本/复制后缀检查（Copy/Old 不查：BtnCopy、*Gold 是合法名，误报实证）
+  const VER_SUFFIX = /((new|bak|final)\d*|v\d+|\(\d+\))$/i;
+  const regSeen = new Map();     // 归一化 path|name → 首见 id（同文件夹同名双登记检查）
+  const compPerPath = new Map(); // 文件夹 → 组件数（平铺一把梭检查）
   for (const e of entries) {
     const id = (e.match(/ id="([^"]+)"/) || [])[1];
     const name = (e.match(/ name="([^"]+)"/) || [])[1];
     if (!id) continue;
     if (byId.has(id)) { console.log(`✗ ${pkgDir}/package.xml: id 重复 ${id}`); problems++; }
     byId.set(id, name || '');
+    // STANDARDS §2.9：组件名只回答"它是什么"——模块归属归文件夹（§1）、变体归引擎配置（§2.5）、
+    // 版本归原名迭代（§6）、唯一性归 id（§2.8）。名字被迫当唯一键用就会无限拼定语变长。
+    const dir = ((e.match(/ path="([^"]+)"/) || [])[1] || '/').replace(/\/+$/, '') || '/';
+    if (name) {
+      // path+name 定位同一份文件：同文件夹两条同名登记 = 两个 id 指向一个文件，登记歧义
+      // （跨文件夹同名合法——引用走 id 不走名字，实证 fsjnh 六个模块各一份 AwardItem.xml）
+      const sameFile = `${dir}|${name}`;
+      if (regSeen.has(sameFile)) {
+        console.log(`⚠ ${pkgDir}/package.xml: ${dir === '/' ? '根目录' : dir} 下 "${name}" 重复登记（id ${regSeen.get(sameFile)} 与 ${id} 指向同一文件——登记歧义，去重或挪文件夹，见 STANDARDS §2.9）`);
+      } else {
+        regSeen.set(sameFile, id);
+      }
+    }
+    if (e.startsWith('<component') && name) {
+      const base = name.replace(/\.xml$/i, '');
+      if (base.length > 28) {
+        console.log(`⚠ ${pkgDir}/package.xml: 组件名 "${base}" ${base.length} 字拼装过长（生产普查全机最长 28——模块归属交文件夹、变体交 controller/gear、迭代改原名，别往名字里拼下一个定语，见 STANDARDS §2.9）`);
+      }
+      if (VER_SUFFIX.test(base)) {
+        console.log(`⚠ ${pkgDir}/package.xml: 组件名 "${base}" 带版本/复制后缀（在原名上迭代：改名=引用断链、留副本=死资源，见 STANDARDS §2.9/§6）`);
+      }
+      compPerPath.set(dir, (compPerPath.get(dir) || 0) + 1);
+    }
     // STANDARDS §2.8：资源 id 字符集 [0-9a-z]（长度不限——实证 4~13 位都能加载，长度不是加载错误源，
     // 别拿"id 太长/太短"当加载失败的原因）
     if (!/^[0-9a-zA-Z]+$/.test(id)) {
@@ -168,6 +198,14 @@ for (const [pkgDir, P] of PKGS) {
           }
         }
       }
+    }
+  }
+
+  // STANDARDS §2.9：单文件夹堆组件——模块隔离靠文件夹，不靠平铺一把再让名字去区分模块
+  // （生产普查单文件夹最多 21 个：Basic 包 /Button/；gm 包 15 个平铺根目录也正常加载——组织纪律非阻断）
+  for (const [dir, n] of compPerPath) {
+    if (n > 25) {
+      console.log(`⚠ ${pkgDir}/package.xml: ${dir === '/' ? '根目录' : dir} 平铺 ${n} 个组件（>25，生产普查单文件夹最多 21——按模块拆子文件夹，见 STANDARDS §1/§2.9）`);
     }
   }
 
