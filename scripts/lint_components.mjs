@@ -21,6 +21,7 @@
  *  13. 登记存在性      —— package.xml 条目 path+name 指向的文件必须真实存在（移动/删除文件不同步登记，发布丢资源）
  *  14. fileName 对账   —— 警告：组件 XML fileName 与 src 登记路径不一致（编辑器按 src 定位仍可加载，但合并/移动后必须同步）
  *  15. 组件命名拼装    —— 警告：组件名 >28 字/版本复制后缀/同文件夹同名双登记/单文件夹组件 >25（STANDARDS §2.9）
+ *  16. 单图纯转发组件  —— 警告：displayList 只有一个 image 且无 extention/controller/transition/gear（包一层零能力纯开销，STANDARDS §2.10）
  *
  * 白名单依据：官方编辑器自身工程（fairygui/FairyGUI-Editor 仓库 288 个 XML）全量普查
  * + 官方 demo 工程交叉验证，见 STANDARDS.md §2.6。id/目录约定依据本机生产工程
@@ -28,6 +29,8 @@
  * ui://他包id）按目标包的 package.xml 对账——11~14 与跨包解析配套。组件命名与
  * 文件夹隔离依据本机十余生产工程 8 包全量普查（名字主体 7~17 字、全机最长 28、
  * 同名组件跨文件夹大量合法共存、单文件夹最多 21 个），见 STANDARDS.md §2.9。
+ * 单图包装依据 CopyCat 复原工程（taptap_maker）导出器事故 + 生产 Reddot 存量实证，
+ * 见 STANDARDS.md §2.10。
  *
  * 退出码：有问题=1（可配合 CI/预提交拦截），干净=0
  */
@@ -318,6 +321,21 @@ for (const [pkgDir, P] of PKGS) {
     const objCount = (src.match(/<(?:image|graph|loader|loader3D|text|richtext|list|component|jta|group)[\s/>]/g) || []).length;
     if (objCount > 80) {
       console.log(`⚠ ${rel} 显示对象 ${objCount} 个（>80，把资源堆一个组件了——按页面/复用件/cell 拆，见 STANDARDS §2）`);
+    }
+    // STANDARDS §2.10：单图纯转发层——displayList 只有一个 image 且无 extention/controller/transition/gear。
+    // 包一层不新增任何能力（image 本身有 color/alpha/size/scale9grid/relations/gear），却多一份登记、深一层引用。
+    // 依据：taptap_maker 导出器残留 lbl_info1.xml + 生产存量 Reddot.xml（每包 1~2 个，容忍不再新增）。
+    // 只查文件里恰一个 displayList 且无 list/item 内联（嵌套 displayList 会数错直接子件）。
+    if ((src.match(/<displayList>/g) || []).length === 1) {
+      const dl = src.match(/<displayList>([\s\S]*?)<\/displayList>/);
+      if (dl && !/<(?:list|item)\b/.test(dl[1])) {
+        const kids = [...dl[1].matchAll(/<([a-zA-Z][a-zA-Z0-9]*)[\s/>]/g)].map((m) => m[1]).filter((t) => OBJ_TAGS.has(t));
+        // 扩展元素首字母大写（<Button>…），与对象标签 <button> 不冲突；gearXY/gearDisplay 等以 gear+大写开头
+        const noLogic = !/extention=|<controller|<transition|<action|gear[A-Z]|<(?:Button|Label|ComboBox|ProgressBar|Slider|ScrollBar|List|Tree)\b/.test(src);
+        if (kids.length === 1 && kids[0] === 'image' && noLogic) {
+          console.log(`⚠ ${rel} 单图纯转发组件（displayList 只有一个 image、无 extention/controller/transition/gear——直接在使用方 <image src=>，包装层零能力纯开销，见 STANDARDS §2.10）`);
+        }
+      }
     }
   }
 }
