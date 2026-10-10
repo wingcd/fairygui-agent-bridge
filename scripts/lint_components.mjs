@@ -22,6 +22,7 @@
  *  14. fileName 对账   —— 警告：组件 XML fileName 与 src 登记路径不一致（编辑器按 src 定位仍可加载，但合并/移动后必须同步）
  *  15. 组件命名拼装    —— 警告：组件名 >28 字/版本复制后缀/同文件夹同名双登记/单文件夹组件 >25（STANDARDS §2.9）
  *  16. 单图纯转发组件  —— 警告：displayList 只有一个 image 且无 extention/controller/transition/gear（包一层零能力纯开销，STANDARDS §2.10）
+ *  17. 同构行未合并    —— 警告：同文件夹内结构指纹相同的组件 ≥4 个（每行建了组件文件，应一个 cell + list，STANDARDS §2.11）
  *
  * 白名单依据：官方编辑器自身工程（fairygui/FairyGUI-Editor 仓库 288 个 XML）全量普查
  * + 官方 demo 工程交叉验证，见 STANDARDS.md §2.6。id/目录约定依据本机生产工程
@@ -30,7 +31,8 @@
  * 文件夹隔离依据本机十余生产工程 8 包全量普查（名字主体 7~17 字、全机最长 28、
  * 同名组件跨文件夹大量合法共存、单文件夹最多 21 个），见 STANDARDS.md §2.9。
  * 单图包装依据 CopyCat 复原工程（taptap_maker）导出器事故 + 生产 Reddot 存量实证，
- * 见 STANDARDS.md §2.10。
+ * 见 STANDARDS.md §2.10。同构行依据 taptap_maker 7 组实证（字节级相同×10、只差
+ * text 值×20）+ 生产 6 工程零命中，见 STANDARDS.md §2.11。
  *
  * 退出码：有问题=1（可配合 CI/预提交拦截），干净=0
  */
@@ -216,9 +218,27 @@ for (const [pkgDir, P] of PKGS) {
   if (!fs.existsSync(compRoot)) continue;
   const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
     d.isDirectory() ? walk(path.join(dir, d.name)) : d.name.endsWith('.xml') ? [path.join(dir, d.name)] : []);
+  // STANDARDS §2.11：同构行收敛——同文件夹内结构指纹相同的组件 ≥4 个 = 每行建了组件文件。
+  // 指纹 = 剥离 id/name/fileName/text 值与元素内文本（保留 src/几何/颜色/字号）后的全文：
+  // 字节级相同（WGongfa1×10）与只差 text 值（WKaishi1×20）都算同构；底图/尺寸/子件不同是真差异
+  // （NormalButton 变体家族、suo 家族）不算；跨模块文件夹的同名组件合法（§2.9）不在本查范围。
+  const rowFp = new Map(); // 目录 → Map(指纹 → {n, first, second})
   for (const file of walk(compRoot)) {
     const rel = path.relative(root, file);
     const src = fs.readFileSync(file, 'utf8');
+    {
+      const dir = path.dirname(file);
+      const fp = src
+        .replace(/\s(?:id|name|fileName|text|prompt)="[^"]*"/g, '')
+        .replace(/>([^<>]*)</g, '><')
+        .replace(/\s+/g, ' ');
+      if (!rowFp.has(dir)) rowFp.set(dir, new Map());
+      const g = rowFp.get(dir);
+      const cur = g.get(fp) || { n: 0, first: path.basename(file), second: path.basename(file) };
+      if (cur.n === 1) cur.second = path.basename(file);
+      cur.n++;
+      g.set(fp, cur);
+    }
     src.split('\n').forEach((line, i) => {
       const ln = i + 1;
       for (const m of line.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)((?:\s+[\w:]+="[^"]*")*)\s*\/?>/g)) {
@@ -335,6 +355,14 @@ for (const [pkgDir, P] of PKGS) {
         if (kids.length === 1 && kids[0] === 'image' && noLogic) {
           console.log(`⚠ ${rel} 单图纯转发组件（displayList 只有一个 image、无 extention/controller/transition/gear——直接在使用方 <image src=>，包装层零能力纯开销，见 STANDARDS §2.10）`);
         }
+      }
+    }
+  }
+  // STANDARDS §2.11 报告：按文件夹分组输出 ≥4 个同构指纹的组件组
+  for (const [dir, g] of rowFp) {
+    for (const { n, first, second } of g.values()) {
+      if (n >= 4) {
+        console.log(`⚠ ${path.relative(root, dir)} ${n} 个同构组件（如 ${first}、${second}…结构指纹相同只差文本/编号——抽一个 cell + list（flow_vt + defaultItem + itemRenderer 喂数据），见 STANDARDS §2.11）`);
       }
     }
   }
