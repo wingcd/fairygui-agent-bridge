@@ -131,8 +131,12 @@ function itemInfo(pkg, item, depth) {
     if (depth > 0) {
         o.children = [];
         var ch = item.children;
-        for (var i = 0; i < ch.Count; i++) {
-            o.children.push(itemInfo(pkg, ch.get_Item(i), depth - 1));
+        // 非文件夹项（image/font/sound/jta…）children 为 null——实证：挪一挪猪 common
+        // 含 font/sound 登记，list_items depth>0 必炸（findItem 早有同款判空守卫）
+        if (ch != null) {
+            for (var i = 0; i < ch.Count; i++) {
+                o.children.push(itemInfo(pkg, ch.get_Item(i), depth - 1));
+            }
         }
     }
     return o;
