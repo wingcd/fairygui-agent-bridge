@@ -209,6 +209,22 @@ lint ⚠ 检查 17：同文件夹内结构指纹相同的组件 ≥4 个（生�
 
 > 判断口诀：**第 3 个"只差字"的同款行出现时，停下——它是 list 的一行，不是新组件；行里差的"字"是数据，用 itemRenderer 喂。**
 
+## 2.12 设计分辨率缩放导出：改源副本再发布，禁止 patch 发布产物
+
+> 场景：工程按 1080×1920 制作，小游戏要 750×1334 的包（包体/内存）。**缩放发生在"喂给发布的源工程"，不是发布函数、更不是发布产物**——图集区域坐标 + .bin patch 等于重写打图集器，图集重打包本来就是编辑器 publish 的事。
+
+**管线**：`scripts/scale_project.mjs --src <工程根> --to 750x1334` 生成缩放副本（源只读，副本可 `--force` 重建）→ lint → bridge `launch(visible:true)` → `refresh` + `list-items` → `publish`。图集不用自己重打，publish 自己算。
+
+**比例与取整**：统一按宽度单比例（750/1080=0.6944），禁止 x/y 各用各的比例（宽高比微差交给运行时适配；非均匀缩放会拉变形九宫格和位图字）。一律 `Math.round`，**永远从源工程一次转换**——1080→750 之后再 →别的会累积取整误差。设计尺寸不在 .fairy 里，体现在全屏组件尺寸上：脚本按众数自动探测（kaizong_lipai 实测 1000×2000 与 750×1334 并存会近似并列，须 --from 显式指定）。
+
+**缩放清单（4 工程 1460 组件普查实证）**：布局 xy/size（嵌套 displayList 一并）、group xy/size/colGap/lineGap、designImageOffsetX/Y；文本 fontSize/titleFontSize/leading/strokeSize/shadowOffset；list margin/colGap/lineGap；graph lineSize/corner/points；gearXY/gearSize（w,h 缩、scale 分量不缩）/gearFontSize；transition 按 type 分派（XY/Size 缩两维、Width/Height/Shake 一维、Scale/Pivot/Alpha/Rotation 不缩，time/duration 永不缩）；package.xml 的 scale9grid 仅当该图真实缩小后同步（格线必须贴缩后像素，防取整漂移越界）。**不缩**：pivot/anchor（相对）、scale/rotation/alpha、relations（百分比）、controller/action、downEffectValue。
+
+**资源策略 shrink（默认）**：png 纯 JS 区域平均重采样（预乘 alpha）；jpg 需 sharp（Windows 中文路径必须传 Buffer 不能传路径——libvips 打不开非 ASCII 路径，挪一挪猪实证）；细线（源最短边 ≤4px）、缩后 <3px、九宫格缩后 <3px 保留原图；ttf 动态字体无位图度量不动；jta 内嵌二进制贴图不动（仅上报）；**多语言分支目录 assets_zh/assets_en/… 不在处理范围**（脚本会告警，分支包仍是原分辨率）。保留高清选项 `--res keep` 只缩布局。
+
+**验收与实证（挪一挪猪 750×1334→540×960 全链路）**：10535 个属性逐项对账零错（变的全符合策略、没变的逐字节一致）；12 张 png 与 sharp lanczos 交叉校验尺寸全对、通道均值差 max 1.85；lint 源/副本同为 429 零新增；编辑器 5/5 包 list-items + 4 组件 open-doc 全过；publish 成功，atlas 页 1024×512→512×512，game 包 2.15MB→1.95MB（**-9.3%**——纯色 UI 素材 PNG 本身压缩率高、.bin 尺寸不随坐标变，别拿"面积 52%"当预期；图片占比越高/jpg 越多降幅越大）。
+
+> 运维坑（实测）：①编辑器曾崩溃后 `ensure` 默认隐藏窗口启动会**永久卡死帧循环**（崩溃恢复对话框 × 隐藏窗口，Player.log 无痕）——崩溃过的编辑器一律 `launch '{"visible":true}'`；②两个实例并发开同一工程 → GameAssembly 0xC0000005 同偏移崩溃，串行操作；③插件的 list-items 遇 font/sound/jta 等叶子资源 children=null 必炸（itemInfo 缺判空守卫，已修）。
+
 ## 3. XML 硬规矩（✗ 阻断项，lint 机器查）
 
 | 规矩 | 原因（事故） |

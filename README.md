@@ -144,6 +144,25 @@ Unity 编辑器裁剪构建中的 `System.Diagnostics.Process` 查询会在登�
 
 回归检查：`node scripts/test_instances.mjs`。真实多窗口编辑和发布还需以编辑器在线结果验收；编辑器自身启动崩溃与 HTTP 路由是不同问题。
 
+## 设计分辨率缩放导出（1080×1920 → 750×1334 之类）
+
+把按分辨率 A 制作的工程整体缩放成分辨率 B 的**副本工程**，再用本桥走官方发布得到目标分辨率的包（含按比例缩小的图片）。缩放发生在源工程副本上——不 patch 发布产物（图集坐标/.bin），图集重打包交给编辑器 publish。
+
+```bash
+node scripts/scale_project.mjs --src D:/work/my-ui --to 750x1334
+# 可选：--from 1080x1920（默认从全屏组件自动探测）--res keep（保留高清只缩布局）
+#        --out <dir> --packages a,b --port N --dry --force
+# jpg 缩放需 sharp：npm i sharp 后 --sharp-dir <含 node_modules 的目录>（png 零依赖）
+
+# 副本验收双闸（缩放完脚本也会打印这串）：
+node scripts/lint_components.mjs D:/work/my-ui_scaled_750x1334
+node cli/fgui.mjs launch '{"project":"D:/work/my-ui_scaled_750x1334","visible":true}'
+node cli/fgui.mjs refresh '{}' && node cli/fgui.mjs list-items '{"pkg":"common"}'
+node cli/fgui.mjs publish '{"pkg":"common"}'
+```
+
+缩什么、不缩什么、资源策略细则与实证数字见 STANDARDS.md §2.12。要点：统一按宽度单比例、永远从源一次转换（不嵌套转换）；副本携带 `scale-report.json`（含未分类属性上报，供规范演化）。已知边界：多语言分支目录（assets_zh 等）与 jta 内嵌贴图不缩放（脚本会告警）。
+
 ## 已实测（免费版编辑器，端到端）
 
 以下全部在免费版编辑器上通过（Windows，编辑器最小化后台运行）：
