@@ -8,7 +8,8 @@
  * 检查项（全部来自真实事故，见 STANDARDS.md）：
  *   1. 重复属性        —— 非法 XML，编辑器双击组件必弹错误框
  *   2. 8 位颜色        —— #RRGGBBAA 部分运行时只取后 6 位（黑影变纯蓝事故）
- *   3. 引用缺失        —— src= 的 id / url= 的 ui://pkgId+itemId 在 package.xml 解析不到
+ *   3. 引用缺失        —— src=/url=/defaultItem= 以及 icon=/titleIcon=/sound=/font= 的 ui://
+ *                         引用在目标包 package.xml 解析不到（icon 类悬空全静默，STANDARDS §2.15）
  *   4. 图片名缺 .png   —— package.xml 里 image name 不带 .png 会被编辑器重复导入
  *   5. 子对象命名      —— 警告：name 为 n\d+ 裸编号（规范要求语义名）
  *   6. 发明类型标签    —— displayList 对象标签不在 10 种白名单内（编辑器解析丢对象/组件打不开）
@@ -23,6 +24,10 @@
  *  15. 组件命名拼装    —— 警告：组件名 >28 字/版本复制后缀/同文件夹同名双登记/单文件夹组件 >25（STANDARDS §2.9）
  *  16. 单图纯转发组件  —— 警告：displayList 只有一个 image 且无 extention/controller/transition/gear（包一层零能力纯开销，STANDARDS §2.10）
  *  17. 同构行未合并    —— 警告：同文件夹内结构指纹相同的组件 ≥4 个（每行建了组件文件，应一个 cell + list，STANDARDS §2.11）
+ *  18. 单选未关联控制器 —— 警告：静态 radio 实例缺 controller="名" page="N" 关联（互斥选中/初始态/联动
+ *                         退化为代码手工管理，STANDARDS §2.13）
+ *  19. 全屏贴底漏绑    —— 警告：全屏量级组件里贴底元素未绑 bottom 类 relation 也未入绑底的组
+ *                         （FitWidth 适配下底部悬空露边，STANDARDS §2.14）
  *
  * 白名单依据：官方编辑器自身工程（fairygui/FairyGUI-Editor 仓库 288 个 XML）全量普查
  * + 官方 demo 工程交叉验证，见 STANDARDS.md §2.6。id/目录约定依据本机生产工程
@@ -32,7 +37,11 @@
  * 同名组件跨文件夹大量合法共存、单文件夹最多 21 个），见 STANDARDS.md §2.9。
  * 单图包装依据 CopyCat 复原工程（taptap_maker）导出器事故 + 生产 Reddot 存量实证，
  * 见 STANDARDS.md §2.10。同构行依据 taptap_maker 7 组实证（字节级相同×10、只差
- * text 值×20）+ 生产 6 工程零命中，见 STANDARDS.md §2.11。
+ * text 值×20）+ 生产 6 工程零命中，见 STANDARDS.md §2.11。单选关联依据 taptap_maker
+ * 反例（Catalog/RacePreparation/Settings 十余 radio 实例零关联）+ 挪一挪猪正例
+ * （AchievementWindow `<Button controller="mode" page="N"/>`）实证，见 STANDARDS.md §2.13。
+ * 贴底绑定依据 BricksBreakerRPG Stash（改后全链路正例）vs Shop（全裸放反例）+ 锦鹏系
+ * 5 工程窗口式 UI 零命中实证，见 STANDARDS.md §2.14。
  *
  * 退出码：有问题=1（可配合 CI/预提交拦截），干净=0
  */
@@ -78,6 +87,29 @@ if (!fs.existsSync(assetsDir)) {
   process.exit(2);
 }
 
+// displayList 内容按标签配平深度切出直接子件（STANDARDS §2.14 贴底检查用：嵌套子件
+// 的 xy/relation 属于被引用组件内部，不能当本组件顶层几何）
+function topLevel(dl) {
+  const out = [];
+  const tokens = [...dl.matchAll(/<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^>"']|"[^"]*"|'[^']*')*)\s*(\/?)>/g)];
+  let depth = 0, cur = null, innerStart = 0;
+  for (const t of tokens) {
+    if (t[1]) { // 闭标签
+      if (depth > 0) depth--;
+      if (depth === 0 && cur) { cur.inner = dl.slice(innerStart, t.index); out.push(cur); cur = null; }
+      continue;
+    }
+    // 自闭合看全文结尾：attrs 段允许 "/"（fileName/url 里合法），组捕获会被吞掉
+    const selfClose = t[0].endsWith('/>');
+    if (depth === 0) {
+      cur = { tag: t[2], attrs: t[3] || '', inner: '' };
+      if (selfClose) out.push(cur);
+      else { depth = 1; innerStart = t.index + t[0].length; }
+    } else if (!selfClose) depth++;
+  }
+  return out;
+}
+
 let problems = 0;
 
 // 预扫描全部包：包 id、登记条目、id→登记相对路径。
@@ -107,6 +139,27 @@ for (const pkgDir of fs.readdirSync(assetsDir)) {
       problems++;
     } else {
       pkgById.set(pkgId, pkgDir);
+    }
+  }
+}
+
+// STANDARDS §2.13 预扫描：全工程 radio 皮肤件索引（包目录名 → Set(资源 id)）。
+// mode="Radio" 住在皮肤件根 Button 上，使用方内嵌 <Button> 常省略 mode——判定
+// "component 引用是不是单选实例"必须反查目标皮肤件（跨包引用一并覆盖）。
+const walkXml = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+  d.isDirectory() ? walkXml(path.join(dir, d.name)) : d.name.endsWith('.xml') ? [path.join(dir, d.name)] : []);
+const radioSkins = new Map();
+for (const [pd, P] of PKGS) {
+  const compRoot = path.join(assetsDir, pd, 'components');
+  if (!fs.existsSync(compRoot)) continue;
+  const rev = new Map(); // 登记相对路径 → 资源 id（pathOf 反查；双登记脏数据任取其一）
+  for (const [id, rel] of P.pathOf) if (rel && rel.endsWith('.xml')) rev.set(rel, id);
+  for (const file of walkXml(compRoot)) {
+    if (!/<Button\b[^>]*mode="Radio"/.test(fs.readFileSync(file, 'utf8'))) continue;
+    const id = rev.get(path.relative(path.join(assetsDir, pd), file).replace(/\\/g, '/'));
+    if (id) {
+      if (!radioSkins.has(pd)) radioSkins.set(pd, new Set());
+      radioSkins.get(pd).add(id);
     }
   }
 }
@@ -216,14 +269,12 @@ for (const [pkgDir, P] of PKGS) {
 
   const compRoot = path.join(assetsDir, pkgDir, 'components');
   if (!fs.existsSync(compRoot)) continue;
-  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
-    d.isDirectory() ? walk(path.join(dir, d.name)) : d.name.endsWith('.xml') ? [path.join(dir, d.name)] : []);
   // STANDARDS §2.11：同构行收敛——同文件夹内结构指纹相同的组件 ≥4 个 = 每行建了组件文件。
   // 指纹 = 剥离 id/name/fileName/text 值与元素内文本（保留 src/几何/颜色/字号）后的全文：
   // 字节级相同（WGongfa1×10）与只差 text 值（WKaishi1×20）都算同构；底图/尺寸/子件不同是真差异
   // （NormalButton 变体家族、suo 家族）不算；跨模块文件夹的同名组件合法（§2.9）不在本查范围。
   const rowFp = new Map(); // 目录 → Map(指纹 → {n, first, second})
-  for (const file of walk(compRoot)) {
+  for (const file of walkXml(compRoot)) {
     const rel = path.relative(root, file);
     const src = fs.readFileSync(file, 'utf8');
     {
@@ -272,25 +323,29 @@ for (const [pkgDir, P] of PKGS) {
         }
       }
       // 引用解析按整个标签看：src= 裸 id 指本包；带 pkg= 或 ui://前 8 位是包 id 的指他包，
-      // 必须按目标包的 package.xml 对账（挪一挪猪等真实工程存在合法跨包引用，按本包查会误报）
+      // 必须按目标包的 package.xml 对账（挪一挪猪等真实工程存在合法跨包引用，按本包查会误报）。
+      // STANDARDS §2.15：icon/titleIcon/sound/font 同为资源引用（Button/Label 的图标、text 的
+      // 位图字体），只认 ui:// 形态——font="家族名" 明文不是引用不查；这类引用悬空时编辑器
+      // 与运行时都静默容受（图标/字体空白无报错），必须机器拦。
       for (const tg of line.matchAll(/<[a-zA-Z][a-zA-Z0-9]*\b[^>]*\/?>/g)) {
         const tag = tg[0];
-        const v = (tag.match(/(?:src|url|defaultItem)="([^"]+)"/) || [])[1];
-        if (v !== undefined) {
+        for (const am of tag.matchAll(/\b(src|url|defaultItem|icon|titleIcon|sound|font)="([^"]+)"/g)) {
+          const attr = am[1];
+          const v = am[2];
           if (v.startsWith('ui://')) {
             if (v.slice(5).includes('/')) { console.log(`✗ ${rel}:${ln} ui:// 格式为 pkgId+itemId 直连无斜杠：${v}`); problems++; }
             // ui:// 后前 8 位固定是包 id（STANDARDS §2.8）——先按它找到目标包
             const p8 = v.slice(5, 13);
             const ownerDir = pkgById.get(p8);
             if (!ownerDir) {
-              console.log(`✗ ${rel}:${ln} 引用缺失 ${v}（包 id "${p8}" 不在本工程 assets/ 下，或长度≠8 位错位截取）`); problems++;
+              console.log(`✗ ${rel}:${ln} 引用缺失 ${attr}=${v}（包 id "${p8}" 不在本工程 assets/ 下，或长度≠8 位错位截取）`); problems++;
             } else {
               const itemId = v.slice(13);
               if (!PKGS.get(ownerDir).byId.has(itemId)) {
-                console.log(`✗ ${rel}:${ln} 引用缺失 ${v}（itemId 不在 ${ownerDir}/package.xml）`); problems++;
+                console.log(`✗ ${rel}:${ln} 引用缺失 ${attr}=${v}（itemId 不在 ${ownerDir}/package.xml——悬空引用无任何报错，编辑器/运行时图标或字体直接空白，见 STANDARDS §2.15）`); problems++;
               }
             }
-          } else if (/^[0-9a-zA-Z]{4,13}$/.test(v)) {
+          } else if ((attr === 'src' || attr === 'url' || attr === 'defaultItem') && /^[0-9a-zA-Z]{4,13}$/.test(v)) {
             const pkgAttr = (tag.match(/ pkg="([^"]+)"/) || [])[1];
             const ownerDir = pkgAttr ? pkgById.get(pkgAttr) : pkgDir;
             if (pkgAttr && !ownerDir) {
@@ -354,6 +409,81 @@ for (const [pkgDir, P] of PKGS) {
         const noLogic = !/extention=|<controller|<transition|<action|gear[A-Z]|<(?:Button|Label|ComboBox|ProgressBar|Slider|ScrollBar|List|Tree)\b/.test(src);
         if (kids.length === 1 && kids[0] === 'image' && noLogic) {
           console.log(`⚠ ${rel} 单图纯转发组件（displayList 只有一个 image、无 extention/controller/transition/gear——直接在使用方 <image src=>，包装层零能力纯开销，见 STANDARDS §2.10）`);
+        }
+      }
+    }
+    // STANDARDS §2.13：单选组必须 controller 化——displayList 里静态引用的单选实例必须关联
+    // 本组件定义的控制器。运行时互斥选中/初始态/内容联动全靠 relatedController（GButton.selected
+    // → controller.SetSelected(page)；controller 变页 → HandleControllerChanged 同步选中，零代码）；
+    // 缺关联的"单选组"互斥失去分组依据，只能代码手工管理每个按钮的 selected（taptap_maker
+    // Catalog filter0~2、RacePreparation 三组调校、Settings 画质组全部无关联实证）。边界：
+    // list 的 <item> 内联引用（动态行单选，互斥归 itemRenderer/onClickItem）、Check 模式
+    // （单开关无互斥需求）、皮肤件定义处（根级 Button mode="Radio"，关联发生在使用方）不查。
+    {
+      // 剥掉 list <item> 内联区段：行是数据不是静态结构，嵌套 item 顶多漏报不会误报
+      const staticPart = src.replace(/<item\b[\s\S]*?<\/item>/g, '');
+      const myCtrls = new Set([...src.matchAll(/<controller\b[^>]*\sname="([^"]+)"/g)].map((m) => m[1]));
+      for (const cm of staticPart.matchAll(/<component\b[^>]*>/g)) {
+        const tag = cm[0];
+        const v = (tag.match(/\b(?:src|url)="([^"]+)"/) || [])[1];
+        if (!v) continue; // 根元素/无引用的 component 不查
+        let ownerDir = pkgDir;
+        let itemId = v;
+        if (v.startsWith('ui://')) {
+          ownerDir = pkgById.get(v.slice(5, 13));
+          itemId = v.slice(13);
+        } else {
+          const pkgAttr = (tag.match(/\bpkg="([^"]+)"/) || [])[1];
+          if (pkgAttr) ownerDir = pkgById.get(pkgAttr);
+        }
+        const isRadioSkin = ownerDir && radioSkins.get(ownerDir)?.has(itemId);
+        const bm = staticPart.slice(cm.index + tag.length).match(/^\s*<Button\b([^>]*?)\/?>/);
+        const btn = bm ? bm[1] : '';
+        if (!isRadioSkin && !/mode="Radio"/.test(btn)) continue;
+        const name = (tag.match(/\bname="([^"]+)"/) || [])[1] || (tag.match(/\bid="([^"]+)"/) || [])[1] || itemId;
+        const ctrl = (btn.match(/\bcontroller="([^"]+)"/) || [])[1];
+        if (!ctrl) {
+          console.log(`⚠ ${rel} 单选实例 "${name}" 未关联 controller（${tag.endsWith('/>') ? '自闭合引用无内嵌' : '内嵌 <Button> 缺'} controller="名" page="N"——互斥选中/初始态/联动退化为代码手工管理，见 STANDARDS §2.13）`);
+        } else if (!myCtrls.has(ctrl)) {
+          console.log(`⚠ ${rel} 单选实例 "${name}" 关联的 controller "${ctrl}" 不在本组件定义（悬空等同未关联，见 STANDARDS §2.13）`);
+        }
+      }
+    }
+    // STANDARDS §2.14：全屏页面贴底必绑——FitWidth 等比适配下富余高度累积在底部，贴底元素
+    // （y+h≈组件高）不绑 bottom 类 relation、也不进绑了底的组，实际屏幕上底部悬空/露边
+    // （BricksBreakerRPG Stash 底部导航改前实证：改后底栏组 bottom-bottom + 容量条组对组
+    // bottom-top 链式锚定）。只查全屏量级组件（短边≥700 长边≥1000：720x1280/750x1334/
+    // 1000x2000 全屏页面；644x1049 窗口、800x600 框架不查——锦鹏系生产工程全是 WindowFrame
+    // 居中弹窗，全屏件仅 mask/transition 框架，实证无此需求）。豁免：自带 bottom/height-height
+    // relation（height-height 高度跟随、底边自动贴底）；所归组绑了 bottom（组绑一次成员全跟随）。
+    {
+      const [rw, rh] = (src.match(/<component\b[^>]*\bsize="(\d+),(\d+)"/) || []).slice(1).map(Number);
+      if (rw && rh && Math.min(rw, rh) >= 700 && Math.max(rw, rh) >= 1000) {
+        // 贪婪到最后一个 </displayList>：滚动容器等内嵌 <displayList> 时非贪婪只切到最内层闭合，
+        // 顶层后半段元素全部漏检（BricksBreakerRPG Shop.xml content 内嵌 displayList 实证）
+        const dlBody = src.match(/<displayList>([\s\S]*)<\/displayList>/);
+        if (dlBody) {
+          const tops = topLevel(dlBody[1]);
+          const grpRel = new Map(); // 组 id → 组上 relation 的 sidePair
+          for (const el of tops) {
+            if (el.tag !== 'group') continue;
+            const gid = (el.attrs.match(/\bid="([^"]+)"/) || [])[1];
+            if (gid) grpRel.set(gid, (el.inner.match(/<relation\b[^>]*\bsidePair="([^"]+)"/) || [])[1] || '');
+          }
+          for (const el of tops) {
+            const [x, y] = (el.attrs.match(/\bxy="(-?\d+),(-?\d+)"/) || []).slice(1).map(Number);
+            const [w, h] = (el.attrs.match(/\bsize="(\d+),(\d+)"/) || []).slice(1).map(Number);
+            if (!Number.isFinite(y) || !Number.isFinite(h)) continue;
+            if (Math.abs(y + h - rh) > 4) continue; // 不贴底
+            const sp = (el.inner.match(/<relation\b[^>]*\bsidePair="([^"]+)"/) || [])[1] || '';
+            if (/bottom|height-height/.test(sp)) continue;
+            if (el.tag !== 'group') {
+              const gid = (el.attrs.match(/\bgroup="([^"]+)"/) || [])[1];
+              if (gid && /bottom|height-height/.test(grpRel.get(gid) || '')) continue;
+            }
+            const name = (el.attrs.match(/\bname="([^"]+)"/) || [])[1] || (el.attrs.match(/\bid="([^"]+)"/) || [])[1] || el.tag;
+            console.log(`⚠ ${rel} 全屏组件内 "${name}" 贴底未绑定（y+h=${y + h}≈组件高${rh}：自身无 bottom/height 类 relation、所归组也未绑——FitWidth 适配下富余高度堆在底部，底部悬空露边；底栏绑 bottom-bottom 或成组后组上绑、整幅背景/弹性区绑 height-height，见 STANDARDS §2.14）`);
+          }
         }
       }
     }

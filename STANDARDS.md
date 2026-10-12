@@ -38,8 +38,8 @@ FairyGUI 编辑器/运行时已内置的能力**直接用配置表达**，禁止
 | **九宫格拉伸** | package.xml `<image … scale="9grid" scale9grid="x,y,w,h"/>`（编辑器属性面板「九宫格」），边角不糊地拉伸面板/按钮——**适用范围与切法限制见 §2.7** | ❌ 切图/裁剪出多张图拼；❌ 生成多尺寸变体 png |
 | 图标缩放进框 | GLoader `fill`：`scale`（填满）/`scaleMatchWidth/Height`（按边适配）/`scaleNoBorder`（保比例裁边覆盖） | ❌ 预裁剪图片；❌ 放大 loader 让图"看起来合适"（超框事故根源） |
 | 图片变色/半透明 | image `color="#RRGGBB"` + `alpha`（运行时着色） | ❌ 生成染色后的图片副本 |
-| 响应式布局 | `<relation sidePair="width-width,height-height"/>` 等关系 | ❌ 代码里逐节点重排坐标 |
-| 多状态切换（选中/未选、页签、分页） | controller + `gearDisplay/gearXY/gearSize/gearText`；Button 的 `mode="Check/Radio"` + group | ❌ 同一位置叠 N 份节点靠 visible 切 |
+| 响应式布局 | `<relation sidePair="width-width,height-height"/>` 等关系（全屏页面的分层绑定与成组见 §2.14） | ❌ 代码里逐节点重排坐标 |
+| 多状态切换（选中/未选、页签、分页） | controller + `gearDisplay/gearXY/gearSize/gearText`；单选是 Button `mode="Radio"` 皮肤 + **使用方实例关联 controller**（§2.13，不是靠 group 分组） | ❌ 同一位置叠 N 份节点靠 visible 切 |
 | 列表/网格/瀑布 | GList：`layout="flow_hz/flow_vt"` + `defaultItem` + `itemRenderer` + 虚拟列表 `setVirtual/numItems` | ❌ 在页面组件里平铺 N 个 cell；❌ 自制滚动 |
 | 滚动区 | 容器 `overflow="scroll"`（ScrollPane） | ❌ 自写滚动/裁剪 |
 | 动效 | Transition（编辑器时间轴 + label/hook） | ❌ 代码逐帧驱动补间 |
@@ -224,6 +224,92 @@ lint ⚠ 检查 17：同文件夹内结构指纹相同的组件 ≥4 个（生�
 **验收与实证（挪一挪猪 750×1334→540×960 全链路）**：10535 个属性逐项对账零错（变的全符合策略、没变的逐字节一致）；12 张 png 与 sharp lanczos 交叉校验尺寸全对、通道均值差 max 1.85；lint 源/副本同为 429 零新增；编辑器 5/5 包 list-items + 4 组件 open-doc 全过；publish 成功，atlas 页 1024×512→512×512，game 包 2.15MB→1.95MB（**-9.3%**——纯色 UI 素材 PNG 本身压缩率高、.bin 尺寸不随坐标变，别拿"面积 52%"当预期；图片占比越高/jpg 越多降幅越大）。
 
 > 运维坑（实测）：①编辑器曾崩溃后 `ensure` 默认隐藏窗口启动会**永久卡死帧循环**（崩溃恢复对话框 × 隐藏窗口，Player.log 无痕）——崩溃过的编辑器一律 `launch '{"visible":true}'`；②两个实例并发开同一工程 → GameAssembly 0xC0000005 同偏移崩溃，串行操作；③插件的 list-items 遇 font/sound/jta 等叶子资源 children=null 必炸（itemInfo 缺判空守卫，已修）。
+
+## 2.13 单选组必须 controller 化：radio 实例在使用方关联 controller，禁止代码手工管理互斥
+
+> 来源事故：页面放了单选按钮但整个页面没有一个 controller、实例也不带关联——互斥选中、初始选中态、按选项联动内容全部退化为代码手工实现（onClick 里逐个改 selected、手摆 checked、手动切面板显隐）。taptap_maker（CopyCat 导出工程）全工程普查：Tuning 25 个、RacePreparation 11 个（调校方案/轮胎/部件三组）、Settings 10 个（画质档）、Catalog 10 个（筛选页签）等共 114 个 radio 实例零关联。
+
+**三层结构（哪一层管什么，实证挪一挪猪 AchievementWindow + 毛线填色 Basic 包）**：
+
+- **皮肤件**：`extention="Button"` + 根 `<Button mode="Radio"/>`，内部只有按钮状态 controller（`name="button"`，管 up/down/over 皮肤）。皮肤件**不知道自己属于哪个组**——它只是"长成单选样子的按钮"。
+- **页面 controller**：使用方页面定义业务 controller，每页 = 一个选项（`<controller name="mode" pages="0,,1," selected="1"/>`）。
+- **实例关联**：每个 radio 实例在引用的内嵌 `<Button>` 上写 `controller="名" page="N"`——**分组在这里完成**：
+
+```xml
+<controller name="mode" pages="0,,1," selected="1"/>
+…
+<component id="n143" name="btnAchieve" src="ku5317g" fileName="windows/achievement/TabItem.xml" xy="95,1184">
+  <Button controller="mode" page="0"/>
+</component>
+<component id="n146" name="btnMyAchieve" src="ku5317g" fileName="windows/achievement/TabItem.xml" xy="369,1184">
+  <Button checked="true" title="我的成就" controller="mode" page="1"/>
+</component>
+```
+
+**为什么必须关联（运行时机制，GButton 源码）**：radio 的互斥和状态同步靠 relatedController 双向驱动——点选 → `selected=true` → `relatedController.SetSelected(page)`，同组（同 controller 关联的）实例由 `HandleControllerChanged` 自动互斥同步；controller 变页（代码 `selectedIndex` 或另一个 radio 点击）→ 全组选中态自动跟随。**没有 controller，"单选组"就没有分组依据**：互斥各亮各的、初始态只能 checked 手摆、选项内容联动（gearDisplay 挂同一 controller）无从谈起——全是本该配置表达的东西被迫写进代码。初始态由 controller 的 `selected` 属性表达，别逐个手摆 checked。
+
+**正确分工**：controller/pages 是"选项集合"的声明（编辑器可预览），代码只读/设 `selectedIndex`（存档恢复、默认值下发）。
+
+**不算违规的边界**：
+
+- **list 的动态行单选**（`defaultItem` 引 radio 皮肤 + itemRenderer 填数据，挪一挪猪 SetLanguageWindow 语言选择实证）：行的数量/内容是数据不是结构，互斥在 onClickItem/itemRenderer 里管理是正确分工——本条只查 displayList 里的静态 `<component>` 实例。
+- **Check 模式不查**：复选是独立开关（"记住密码"），无互斥需求，selected 自管理合法；确需多态联动才上 controller（§2.5）。
+- **单个按钮当开关**：用 Check，不是 Radio——Radio 单摆没有互斥对象，语义用错模式。
+- **皮肤件定义处**：根级 `<Button mode="Radio"/>` 是皮肤声明，关联发生在使用方（见上）。
+
+lint 检查 18 ⚠：`<component src=radio皮肤>` 的静态实例（含自闭合形态）缺 `controller="名" page="N"`，或关联的 controller 名不在本组件定义（悬空）；item 内联/defaultItem/Check 模式/皮肤定义处不查。生产 5 工程回归零命中零误报，taptap_maker 命中全部 114 个真实存量。
+
+> 判断口诀：放第二个单选按钮之前，先建 controller——**"一组互斥选项"是 controller 的 pages，不是 N 个各自管 selected 的按钮**；点选联动靠 gear 挂同一 controller，代码只碰 selectedIndex。
+
+## 2.14 全屏页面分层绑定：贴边必绑、弹性跟随、模块成组
+
+> 场景：全屏页面（根 size = 设计分辨率量级，720×1280/750×1334/1000×2000…）不做适配绑定——FitWidth 等比适配下富余高度全部累积在底部，底栏悬空、底下露边。实证 BricksBreakerRPG Shop.xml：bgDark/bottomBg/三个导航按钮全部裸放；同工程 Stash.xml 改造后零问题（本节全部写法的出处）。
+
+**先判断页面形态，再决定要不要绑**：全屏页面必须按本条分层绑定；**窗口式弹窗（WindowFrame 居中框架承载）不适用**——锦鹏系生产工程（挪一挪猪等 5 工程）全屏件只有 mask/transition 框架，页面全是弹窗，全工程 relation 十几条是正常形态，别拿本条去要求弹窗。
+
+**分层绑定模型（Stash.xml 720×1280 全链路实证）**：
+
+| 层 | 绑什么 | 写法 |
+|---|---|---|
+| 全屏背景 | 铺满跟随 | `<relation target="" sidePair="width-width,height-height"/>` |
+| 中间弹性内容区（库存面板/列表） | 高度吃掉富余空间、水平居中 | `sidePair="height-height,center-center"`（面板、内阴影、滚动列表同绑） |
+| 居中装饰（标题） | 双向居中 | `sidePair="center-center,middle-middle"` |
+| 底部模块（底栏：tab×3+背景+按钮×3） | **成组**，组上绑宿主底边 | 成员 `group="组id"` + `<group … advanced="true"><relation target="" sidePair="bottom-bottom"/></group>` |
+| 底栏上方横条（容量条） | 独立小组，**组对组**钉在底栏上方 | `<group …><relation target="底栏组id" sidePair="bottom-top"/></group>` |
+
+要点：`target=""` 指宿主组件本身；**组也是合法 target**——组间绑定（bottom-top = 钉在目标组上方）形成"底栏 → 底栏上方横条"的链式锚定，底栏整体换位置时上方横条自动跟随。顶部模块同理 top-top。
+
+**成组的两种依据（什么时候建组）**：
+
+1. **有一致绑定关系**：几个元素要一起钉在同处（都要贴底、都在底栏上方）→ 成组共用一条 relation，组绑一次成员全跟随——**禁止成员逐个绑同款 relation 散摆**；
+2. **同类型或一个小模块**：底部导航（tab×3 + 背景 + 按钮×3）、顶栏货币条是一个功能模块 → 整组成组，组成为移动/绑定/显隐的单位。
+
+反向边界：组是"一起动"的载体，**不是语义容器**——发现要在组里按名字找子对象做逻辑时，那该抽成组件（组内成员寻址、承载逻辑是组件的职责，§2）。
+
+**代码分工**：适配全部在编辑器 relation 表达；运行时代码只碰业务状态，**不碰坐标**（§2.5 响应式布局行——代码逐节点重排坐标是禁止项）。
+
+lint 检查 19 ⚠：全屏量级组件（短边 ≥700 长边 ≥1000）里贴底元素（y+h≈组件高 ±4）自身无 bottom/height 类 relation、所归组也未绑。中间弹性区跟随、该不该成组机器判不了，靠本节纪律；窗口/框架组件不查。
+
+> 判断口诀：全屏页面先问三件事——**背景铺满了吗（width-width,height-height）、中间弹性区跟高度了吗（height-height）、贴边的绑边了吗（成组 + bottom）**；组和 relation 都在编辑器里表达，代码不碰坐标。
+
+## 2.15 创建 UI 必查丢失资源：引用能解析、文件在盘、登记带 exported
+
+> 来源事故（生产工程普查实证）：组件里 `icon="ui://…"` 指向的 itemId 在目标包登记里查无——整组引用随删图悬空、或指向只剩邻位登记的残留 id。这类悬空引用编辑器和运行时**全部静默容受**：按钮/标签的图标、文本的位图字体直接空白，无报错无日志——旧机器检查只对账 `src=/url=/defaultItem=`，icon 类引用全放行。
+
+**丢失资源的四种形态（创建/改动 UI 收尾时逐一核对）**：
+
+| 形态 | 长什么样 | 编辑器反应 |
+|---|---|---|
+| ① 引用悬空 | `src=/url=/defaultItem=/icon=/titleIcon=/sound=/font=` 指向的 id 在目标包 package.xml 解析不到 | 静默容受，图标/组件空白 |
+| ② 死登记 | package.xml 登记了但 path+name 文件不在磁盘 | 容受，**发布丢资源**（§3 已有死登记事故） |
+| ③ 磁盘孤儿 | 文件拷进了包目录但没登记 package.xml | 编辑器看不见、发布不带 |
+| ④ 缺 exported | 登记在、文件在，但没 `exported="true"` | 加载正常，**发布静默丢弃**（§3 已有 27 图丢失事故） |
+
+**机器闸门（lint ✗ 阻断）**：形态 ①②④ 全量拦——引用对账覆盖 `icon=/titleIcon=/sound=/font=` 的 ui:// 引用（明文字体家族名不是引用，不查）。**前提是组件文件在 `components/` 目录下被扫描到**——登记在自定义目录的组件 lint 看不见，要么放 `components/` 下（§1），要么收尾自查。
+
+**编辑器闸门**（§4 修复闭环）：lint ✗ 清零后 bridge `refresh` + `list_items`，新组件 `open-doc` 开一次——形态 ③（孤儿）与自定义目录里的文件靠这一道兜底。
+
+> 判断口诀：写完 UI 别急着宣布完成——**每个引用问三件事：登记了吗、文件在吗、exported 了吗**；组件在 components/ 外时 lint 管不到，编辑器装载是最后一道闸。
 
 ## 3. XML 硬规矩（✗ 阻断项，lint 机器查）
 
