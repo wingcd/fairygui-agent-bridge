@@ -50,6 +50,17 @@ const TOOLS = {
             ["pkg"],
         ),
     },
+    export_strings: {
+        description:
+            "Export localization strings of the whole project to XML (official ExportStringsHandler; " +
+            "TranslationHelper-compatible <strings> format). Feed the result into your i18n pipeline.",
+        inputSchema: obj(
+            {
+                file: { type: S("string"), description: "output xml path (absolute); default <project>/strings.xml" },
+            },
+            [],
+        ),
+    },
     read_component: {
         description:
             "Return the raw component XML source (the .xml under assets/<pkg>/). " +

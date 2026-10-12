@@ -192,6 +192,15 @@ COMMANDS.list_items = function (a) {
     return ok(itemInfo(pkg, pkg.rootItem, a.depth === undefined ? 3 : a.depth));
 };
 
+COMMANDS.export_strings = function (a) {
+    if (App.project == null) throw "no project open";
+    var file = a.file ? String(a.file) : (projectDirectory() + "/strings.xml");
+    var handler = new FairyEditor.ExportStringsHandler();
+    handler.Parse(App.project.allPackages, false, false);
+    handler.Export(file, false, false);
+    return ok({ file: file, packages: App.project.allPackages.Count });
+};
+
 COMMANDS.read_component = function (a) {
     var pkg = getPkg(a.pkg);
     var item = requireComponentItem(pkg, a.name);
