@@ -9,12 +9,24 @@
 // is polled per frame (IsCompleted), so every request is accepted, executed
 // and answered on the main Unity thread. No JS ever runs off-thread.
 //
+// Startup model: the HTTP server is started from the frame loop (onUpdate),
+// never from inside the onProjectOpened callback - during project open the
+// editor pumps the loading dialog's modal loop, and slow/blocking work done
+// in that callback re-enters PlayerLoop and deadlocks the spinner.
+//
+// IMPORTANT: never call System.Diagnostics.Process from this plugin. In this
+// stripped Unity editor build those queries corrupt native state (observed:
+// GetProcessById on a foreign pid deadlocks the main thread or crashes the
+// editor inside puerts). The plugin therefore registers itself as a plain
+// port-keyed JSON file and does NOT probe other instances; liveness of
+// registered instances is confirmed by the CLI/MCP side with HTTP pings.
+//
 // Endpoint: http://localhost:<port>/   (default 7531, override via port.txt
 // next to this file)
 // Protocol: POST with JSON body  {"cmd": "<command>", "args": {...}}
 // Response: JSON {"ok": true, "data": ...} or {"ok": false, "error": "..."}
 
-var VERSION = "0.2.0";
+var VERSION = "0.3.0";
 
 var FairyGUI = CS.FairyGUI;
 var FairyEditor = CS.FairyEditor;
@@ -28,6 +40,8 @@ var Bridge = {
     pendingAccept: null,   // IAsyncResult of BeginGetContext
     queue: [],             // [{ctx, cmd, args}]
     current: null,         // command being executed across frames (publish)
+    wantServer: false,     // start/restart the listener on the next frame tick
+    port: undefined,       // port we actually bound (set by startServer)
     logLines: []
 };
 
@@ -156,7 +170,6 @@ COMMANDS.ping = function (a) {
         version: VERSION,
         editor: "FairyGUI",
         port: Bridge.port,
-        pid: CS.System.Diagnostics.Process.GetCurrentProcess().Id,
         projectPath: projectDirectory(),
         projectOpen: App.project != null,
         project: projectLabel()
@@ -463,69 +476,41 @@ var ASYNC_STARTERS = { publish: startPublish };
 var ASYNC_STEPPERS = { publish: stepPublish };
 
 // ---------------- instance registry (multi-project support) ----------------
-// A fixed per-user registry file maps running editor instances to their
-// ports, so agents can tell several open projects apart.
+// Each running instance drops one small JSON file keyed by its own port;
+// the CLI/MCP side enumerates them and confirms liveness with an HTTP ping.
+// The plugin never reads or probes other instances (see the Process API
+// warning in the header) and never writes shared files, so concurrent
+// editor startups cannot clobber each other's registrations.
 
-var RegistryPath = (function () {
+var InstancesDir = (function () {
     try {
         return CS.System.Environment.GetFolderPath(CS.System.Environment.SpecialFolder.UserProfile)
-            + "/.fgui-agent-bridge/registry.json";
+            + "/.fgui-agent-bridge/instances";
     } catch (e) { return null; }
 })();
 
-function registryRead() {
-    if (RegistryPath == null) return [];
-    try {
-        var s = CS.System.IO.File.ReadAllText(RegistryPath);
-        var arr = JSON.parse(s);
-        return Array.isArray(arr) ? arr : [];
-    } catch (e) { return []; }
+function instanceFilePath(port) {
+    // port comes from our own bound listener, digits only - no separators
+    return InstancesDir + "/" + port + ".json";
 }
 
-function registryWrite(arr) {
-    if (RegistryPath == null) return;
+function instanceRegister(port) {
+    if (InstancesDir == null) return;
     try {
-        CS.System.IO.Directory.CreateDirectory(
-            CS.System.IO.Path.GetDirectoryName(RegistryPath));
-        CS.System.IO.File.WriteAllText(RegistryPath, JSON.stringify(arr));
-    } catch (e) { plog("registry write failed: " + e); }
+        CS.System.IO.Directory.CreateDirectory(InstancesDir);
+        CS.System.IO.File.WriteAllText(instanceFilePath(port), JSON.stringify({
+            port: port,
+            project: projectLabel(),
+            projectPath: projectDirectory(),
+            startedAt: new Date().toISOString()
+        }));
+    } catch (e) { plog("instance registration failed: " + e); }
 }
 
-function processAlive(pid) {
-    if (!pid) return false;
+function instanceUnregister() {
+    if (InstancesDir == null || Bridge.port === undefined) return;
     try {
-        var p = CS.System.Diagnostics.Process.GetProcessById(pid);
-        return p != null && !p.HasExited;
-    } catch (e) { return false; }
-}
-
-function registryRegister(port) {
-    var myPid = CS.System.Diagnostics.Process.GetCurrentProcess().Id;
-    var arr = registryRead().filter(function (e) { return processAlive(e.pid) && e.pid !== myPid; });
-    var entry = {
-        port: port,
-        pid: myPid,
-        project: projectLabel(),
-        projectPath: projectDirectory(),
-        startedAt: new Date().toISOString()
-    };
-    arr.push(entry);
-    // Independent files avoid lost registrations when two editors start together.
-    try {
-        var folder = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances';
-        CS.System.IO.Directory.CreateDirectory(folder);
-        CS.System.IO.File.WriteAllText(folder + '/' + myPid + '.json', JSON.stringify(entry));
-    } catch (e) { plog('instance registration failed: ' + e); }
-    registryWrite(arr);
-    return entry;
-}
-
-function registryUnregister() {
-    var myPid = CS.System.Diagnostics.Process.GetCurrentProcess().Id;
-    var arr = registryRead().filter(function (e) { return e.pid !== myPid && processAlive(e.pid); });
-    registryWrite(arr);
-    try {
-        var file = CS.System.IO.Path.GetDirectoryName(RegistryPath) + '/instances/' + myPid + '.json';
+        var file = instanceFilePath(Bridge.port);
         if (CS.System.IO.File.Exists(file)) CS.System.IO.File.Delete(file);
     } catch (e) { }
 }
@@ -559,7 +544,7 @@ function startServer() {
             Bridge.listener = listener;
             Bridge.port = port;
             Bridge.pendingAccept = listener.BeginGetContext(null, null);
-            var entry = registryRegister(port);
+            instanceRegister(port);
             plog("listening on http://localhost:" + port + "/ v" + VERSION
                 + (port !== wanted ? " (default port busy, auto-picked)" : ""));
             return true;
@@ -682,6 +667,12 @@ function stepQueue() {
 }
 
 function onUpdate() {
+    // Start/restart the server here, never from the onProjectOpened callback
+    // (see the startup model note in the header comment).
+    if (Bridge.wantServer) {
+        Bridge.wantServer = false;
+        try { startServer(); } catch (e) { plog("startServer failed: " + e); }
+    }
     if (Bridge.listener == null) return;
     pumpAccepts();
     stepQueue();
@@ -694,9 +685,9 @@ function boot() {
         plog("runInBackground not settable: " + e);
     }
     if (App.project != null) {
-        startServer();
+        Bridge.wantServer = true;
     } else {
-        App.add_onProjectOpened(function () { startServer(); });
+        App.add_onProjectOpened(function () { Bridge.wantServer = true; });
     }
     App.add_onUpdate(onUpdate);
     // convenience menu item
@@ -710,8 +701,8 @@ function boot() {
             try { if (Bridge.listener != null) Bridge.listener.Close(); } catch (e) { }
             Bridge.listener = null;
             Bridge.pendingAccept = null;
-            try { registryUnregister(); } catch (e) { }
-            startServer();
+            try { instanceUnregister(); } catch (e) { }
+            Bridge.wantServer = true; // picked up on the next frame tick
         });
     } catch (e) {
         plog("menu hook skipped: " + e);
@@ -721,6 +712,6 @@ function boot() {
 boot();
 
 function onDestroy() {
-    try { registryUnregister(); } catch (e) { }
+    try { instanceUnregister(); } catch (e) { }
     try { if (Bridge.listener != null) Bridge.listener.Close(); } catch (e) { }
 }

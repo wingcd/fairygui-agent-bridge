@@ -13,7 +13,7 @@
 //   FGUI_BRIDGE_URL   default http://localhost:7531/
 
 import process from "node:process";
-import { discover, route, request, stripSelector } from './instances.mjs';
+import { discover, route, request, stripSelector, registryDir } from './instances.mjs';
 
 const BASE = process.env.FGUI_BRIDGE_URL || "http://localhost:7531/";
 
@@ -23,6 +23,83 @@ const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === "discover") {
     console.log(JSON.stringify({ok: true, instances: await discover()}, null, 2));
     process.exit(0);
+}
+
+// sync-plugins: the editor loads plugins per project (there is no global
+// plugin dir), so this keeps ONE source of truth in <repo>/plugin and fans
+// it out to every project in ~/.fgui-agent-bridge/projects.json.
+// usage: fgui sync-plugins                       update all listed projects
+//        fgui sync-plugins '{"add":"D:/work/my-ui"}'     start managing a project
+//        fgui sync-plugins '{"remove":"D:/work/my-ui"}'  stop managing it
+if (cmd === "sync-plugins" || cmd === "install-all") {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const a = rest.length ? JSON.parse(rest.join(" ")) : {};
+    const srcDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "plugin");
+    const srcMain = path.join(srcDir, "main.js");
+    const srcPkg = path.join(srcDir, "package.json");
+    if (!fs.existsSync(srcMain) || !fs.existsSync(srcPkg)) {
+        console.error(JSON.stringify({ok: false, error: `plugin sources not found next to the CLI: ${srcDir}`}, null, 2));
+        process.exit(4);
+    }
+    const listFile = path.join(registryDir, "projects.json");
+    const normalize = (p) => {
+        let v = path.resolve(String(p)).replace(/\\/g, '/').replace(/\/$/, '');
+        if (/\.fairy$/i.test(v)) v = v.slice(0, v.lastIndexOf('/'));
+        return process.platform === 'win32' ? v.toLowerCase() : v;
+    };
+    let list = [];
+    try { list = JSON.parse(fs.readFileSync(listFile, 'utf8')); } catch {}
+    if (!Array.isArray(list)) list = [];
+    const normalized = list.map(p => ({store: p, key: normalize(p)}));
+    if (a.add) {
+        const key = normalize(a.add);
+        if (!normalized.some(e => e.key === key)) {
+            let store = path.resolve(String(a.add)).replace(/\\/g, '/').replace(/\/$/, '').replace(/\.fairy$/i, '');
+            normalized.push({store, key});
+        }
+    }
+    if (a.remove) {
+        const key = normalize(a.remove);
+        for (let i = normalized.length - 1; i >= 0; i--) if (normalized[i].key === key) normalized.splice(i, 1);
+    }
+    list = normalized.map(e => e.store);
+    try { fs.mkdirSync(registryDir, {recursive: true}); fs.writeFileSync(listFile, JSON.stringify(list, null, 2)); } catch (e) {
+        console.error(JSON.stringify({ok: false, error: `cannot write ${listFile}: ${e.message}`}, null, 2));
+        process.exit(4);
+    }
+    const versionOf = (file) => {
+        try { return (fs.readFileSync(file, 'utf8').match(/var VERSION = "([^"]+)"/) || [])[1] || '?'; } catch { return null; }
+    };
+    const newVersion = versionOf(srcMain);
+    const results = [];
+    for (const proj of list) {
+        const dst = path.join(proj, 'plugins', 'agent-bridge');
+        const dstMain = path.join(dst, 'main.js');
+        const dstPkg = path.join(dst, 'package.json');
+        const old = versionOf(dstMain);
+        try {
+            if (!fs.existsSync(proj)) throw new Error('project directory not found');
+            fs.mkdirSync(dst, {recursive: true});
+            let changed = false;
+            for (const [src, dstd] of [[srcMain, dstMain], [srcPkg, dstPkg]]) {
+                const content = fs.readFileSync(src);
+                if (!fs.existsSync(dstd) || !fs.readFileSync(dstd).equals(content)) {
+                    fs.writeFileSync(dstd, content);
+                    changed = true;
+                }
+            }
+            results.push({project: proj, from: old ?? 'none', to: newVersion, status: changed ? 'updated' : 'current'});
+        } catch (e) {
+            results.push({project: proj, from: old ?? 'none', to: newVersion, status: `error: ${e.message}`});
+        }
+    }
+    const online = await discover().then(r => r.map(i => i.projectPath?.toLowerCase())).catch(() => []);
+    console.log(JSON.stringify({ok: true, listFile, pluginVersion: newVersion,
+        note: online.length ? 'online projects need an editor restart to load the new plugin' : undefined,
+        results}, null, 2));
+    process.exit(results.some(r => r.status.startsWith('error')) ? 6 : 0);
 }
 
 // launch: start the editor with a project (window minimized-friendly,
@@ -162,7 +239,11 @@ commands are forwarded verbatim to the editor plugin, e.g.:
 
 special:
   discover   list ALL running bridge instances across projects
-             (reads ~/.fgui-agent-bridge/registry.json, pings each)
+             (reads ~/.fgui-agent-bridge/instances/*.json, pings each)
+  sync-plugins
+             fan <repo>/plugin out to every project in
+             ~/.fgui-agent-bridge/projects.json (add/remove via
+             '{"add":"D:/work/my-ui"}' / '{"remove":"..."}')
 
 examples:
   fgui ping

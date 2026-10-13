@@ -2,3 +2,4 @@ node_modules/
 *.log
 bridge.log
 .DS_Store
+*.stackdump

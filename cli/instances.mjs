@@ -18,12 +18,29 @@ export async function request(url, cmd, args = {}, timeout = 5000) {
     return r.json();
 }
 export async function discover({entries, fallback = process.env.FGUI_BRIDGE_URL || 'http://localhost:7531/'} = {}) {
+    // When reading the on-disk registry we also prune it: the plugin removes
+    // its own file on clean exit, but crashed/hung editors leave orphans.
+    // Liveness is this HTTP ping only - never a PID probe (the editor build
+    // crashes natively on System.Diagnostics.Process queries).
+    const diskFiles = new Map(); // url -> [instance file paths]
+    let registryFile = null, registryEntries = null;
     if (!entries) {
         entries = [];
-        try { entries.push(...JSON.parse(fs.readFileSync(path.join(registryDir, 'registry.json'), 'utf8'))); } catch {}
+        registryFile = path.join(registryDir, 'registry.json');
+        try { registryEntries = JSON.parse(fs.readFileSync(registryFile, 'utf8')); } catch {}
+        if (Array.isArray(registryEntries)) entries.push(...registryEntries);
         try {
-            for (const file of fs.readdirSync(path.join(registryDir, 'instances')))
-                if (file.endsWith('.json')) try { entries.push(JSON.parse(fs.readFileSync(path.join(registryDir, 'instances', file), 'utf8'))); } catch {}
+            const dir = path.join(registryDir, 'instances');
+            for (const file of fs.readdirSync(dir)) {
+                if (!file.endsWith('.json')) continue;
+                try {
+                    const e = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+                    entries.push(e);
+                    const url = e.url || `http://localhost:${e.port}/`;
+                    if (!diskFiles.has(url)) diskFiles.set(url, []);
+                    diskFiles.get(url).push(path.join(dir, file));
+                } catch {}
+            }
         } catch {}
     }
     const urls = new Map(entries.map(e => [e.url || `http://localhost:${e.port}/`, e]));
@@ -45,6 +62,17 @@ export async function discover({entries, fallback = process.env.FGUI_BRIDGE_URL 
             projectPath,
             packageNames: info.data.packageNames || []};
     }));
+    const deadUrls = new Set([...urls.keys()].filter((_, i) => results[i].status === 'rejected'));
+    // A registration is only stale once it has failed a ping well after the
+    // editor could have armed its listener; young files get the benefit of
+    // the doubt (the plugin registers after listener.Start()).
+    const isOld = (file) => { try { return Date.now() - fs.statSync(file).mtimeMs > 30000; } catch { return false; } };
+    for (const [url, files] of diskFiles)
+        if (deadUrls.has(url)) for (const f of files) if (isOld(f)) try { fs.rmSync(f, {force: true}); } catch {}
+    if (registryFile && Array.isArray(registryEntries)) {
+        const live = registryEntries.filter(e => !deadUrls.has(e.url || `http://localhost:${e.port}/`));
+        if (live.length !== registryEntries.length) try { fs.writeFileSync(registryFile, JSON.stringify(live)); } catch {}
+    }
     return results.filter(r => r.status === 'fulfilled' && r.value).map(r => r.value);
 }
 export function selectInstance(instances, selector = {}) {

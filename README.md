@@ -43,6 +43,13 @@ scripts/install.sh  /d/work/my-ui-project     # macOS / Linux
 curl -X POST http://localhost:7531/ -d "{\"cmd\":\"ping\"}"
 ```
 
+**插件升级（推荐）**：编辑器按工程加载插件（没有全局插件目录），所以本仓库提供一条命令把 `plugin/` 铺到所有受管工程——工程清单存放在**用户目录** `~/.fgui-agent-bridge/projects.json`（不进 git，每人各自维护）：
+
+```bash
+node cli/fgui.mjs sync-plugins '{"add":"D:/work/my-ui-project"}'   # 纳管一个工程
+node cli/fgui.mjs sync-plugins                                       # 升级所有纳管工程
+```
+
 **编辑器没开？一条命令拉起并等就绪**（AI 工作流入口）：
 
 ```bash
@@ -123,9 +130,9 @@ AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件
 FairyGUI 一个编辑器实例只开一个工程；开多个编辑器窗口编辑多个工程时，本桥**自动区分**：
 
 - 端口冲突自动递增：第一个实例占 7531，第二个自动用 7532，依此类推（可在各工程 `plugins/agent-bridge/port.txt` 固定指定）
-- 每个实例启动时把 `{port, pid, project}` 注册到 `~/.fgui-agent-bridge/registry.json`，退出自动注销（含陈旧条目清理）
+- 每个实例绑定端口后把 `{port, project, projectPath}` 写到独立的 `~/.fgui-agent-bridge/instances/<port>.json`，退出自动注销；插件**只写自己的文件、不探测其他实例**，多窗口同时启动互不覆盖
 - `ping` / `project_info` 返回本实例端口与工程名，一眼核对连的是谁
-- CLI：`node cli/fgui.mjs discover` 列出所有在线实例及其工程、端口
+- CLI：`node cli/fgui.mjs discover` 列出所有在线实例及其工程、端口，并顺手清理 ping 不通的陈旧注册文件（超过 30 秒的才清，避免误删刚启动的实例）
 - 指定实例：CLI/MCP 设 `FGUI_BRIDGE_URL=http://localhost:7532/`
 
 ### 按请求选择工程（多项目推荐）
@@ -140,9 +147,9 @@ read_component {"project":"H:/games/Other/fairygui","pkg":"Common","name":"Butto
 
 CLI 同样支持：`node cli/fgui.mjs publish '{"project":"H:/games/Storm/fairygui","pkg":"StormRacing"}'`。`project` 可以是目录、`.fairy` 文件或唯一工程名；同名工程必须用绝对路径区分。多个窗口在线却未指定目标时，返回明确错误，不会随便操作第一个窗口。环境变量仍兼容。
 
-`ensure` / `launch` 会先核对目标工程，已有其他工程不能算目标已打开；新进程就绪后也只匹配目标。插件使用独立的 `~/.fgui-agent-bridge/instances/<port>.json` 注册文件，避免多个窗口同时启动覆盖共享注册表。旧版本插件仍可通过 `registry.json` 发现；新项目复制最新 `plugin/main.js`。MCP 工具列表更新后需要重新连接一次客户端。明确需要交互窗口时传 `visible:true`；否则启动器隐藏窗口。
+`ensure` / `launch` 会先核对目标工程，已有其他工程不能算目标已打开；新进程就绪后也只匹配目标。MCP 工具列表更新后需要重新连接一次客户端。明确需要交互窗口时传 `visible:true`；否则启动器隐藏窗口。
 
-Unity 编辑器裁剪构建中的 `System.Diagnostics.Process` 查询会在登记多实例阶段引发原生崩溃，因此插件不调用该 API，也不通过 PID 清理其他窗口。存活状态以 HTTP 心跳确认；插件卸载只移除自身端口记录。“restart server” 会先关闭旧监听器，再重新绑定端口，避免留下旧监听器。
+**v0.3.0 硬性约束（曾有真实事故）**：裁剪版 Unity 编辑器里 `System.Diagnostics.Process` 查询会在启动登记阶段破坏原生状态——实测表现为**编辑器打开工程时永久转圈**（PlayerLoop 递归 + D3D11 呈死锁）或 puerts 内原生崩溃。因此插件**完全不碰**该 API：注册文件按端口键、不跨实例探测、不带 pid；存活状态一律由 CLI/MCP 侧 HTTP 心跳确认，陈旧注册由 `discover` 清理。同理，HTTP 服务**只在帧循环（onUpdate）里启动**，绝不在 `onProjectOpened` 回调里做——工程打开期间回调跑在加载对话框的模态循环里，在那里做慢操作会重入 PlayerLoop 把转圈卡死。”restart server” 也是回到帧循环再绑定，先关旧监听器避免占位。
 
 回归检查：`node scripts/test_instances.mjs`。真实多窗口编辑和发布还需以编辑器在线结果验收；编辑器自身启动崩溃与 HTTP 路由是不同问题。
 
