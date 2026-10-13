@@ -102,6 +102,7 @@ AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件
 | `list_packages` | — | 包列表（id/name/basePath） |
 | `list_items` | `pkg`, `depth?` | 包内资源树（组件/图片/字体，id、路径、尺寸） |
 | `export_strings` | `file?` | 导出多语言字符串 XML（官方 ExportStringsHandler，TranslationHelper 格式；`file` 缺省为工程根 strings.xml） |
+| `import_strings` | `file` | 导入字符串 XML 到工程组件（官方 ImportStringsHandler，文本直接写入组件 XML 并保存；用于编辑器内预览译文，检查完导入原语言 XML 还原） |
 | `read_component` | `pkg`, `name` | 组件 XML 源码（编辑前先读，了解子对象命名） |
 | `create_component` | `pkg`, `name`, `width`, `height`, `path?`, `extention?`, `exported?` | 新建组件；`extention` 可为 Button/Label/ProgressBar/Slider/ComboBox/List/Tree 等 |
 | `delete_item` | `pkg`, `name` | 删除资源（慎用） |

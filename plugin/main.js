@@ -201,6 +201,25 @@ COMMANDS.export_strings = function (a) {
     return ok({ file: file, packages: App.project.allPackages.Count });
 };
 
+COMMANDS.import_strings = function (a) {
+    if (App.project == null) throw "no project open";
+    if (!a.file) throw "file required (FairyGUI-export strings xml format)";
+    var file = String(a.file);
+    if (!CS.System.IO.File.Exists(file)) throw "file not found: " + file;
+    var handler = new FairyEditor.ImportStringsHandler();
+    handler.Parse(file);
+    handler.Import();
+    var count = 0;
+    var it = handler.strings.GetEnumerator();
+    while (it.MoveNext()) {
+        var it2 = it.Current.Value.GetEnumerator();
+        while (it2.MoveNext()) count += it2.Current.Value.Count;
+    }
+    App.docView.SaveAllDocuments();
+    App.RefreshProject();
+    return ok({ file: file, strings: count });
+};
+
 COMMANDS.read_component = function (a) {
     var pkg = getPkg(a.pkg);
     var item = requireComponentItem(pkg, a.name);
