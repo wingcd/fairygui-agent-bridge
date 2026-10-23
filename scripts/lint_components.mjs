@@ -16,7 +16,8 @@
  *   7. 非法 extention  —— 组件扩展值不在 8 种合法值内（CheckBox/Radio/View… 都不存在）
  *   8. 对象数超限      —— 警告：单组件显示对象 > 80（资源堆一个组件，该拆 cell/子组件）
  *   9. 九宫格越界      —— scale9grid 格式非法或中心区超出图片实际尺寸（读 png 头对账，STANDARDS §2.7）
- *  10. 九宫格缩小      —— 带九宫格的图显示 size 小于源图尺寸（四角块被压缩变形，STANDARDS §2.7）
+ *  10. 九宫格压角      —— 带九宫格的图显示 size 小于四角宽高总和（图尺寸−中心区：四角放不下被压缩变形；
+ *                         四角和~源图之间只压中间区角不动，合法。STANDARDS §2.7）
  *  11. 包 id 格式      —— packageDescription id 必须恰为 8 位 [0-9a-z]（ui:// 定长保留位；kzlpcommon 10 字符事故，STANDARDS §2.8）
  *  12. 资源 id 字符集  —— package.xml 条目 id 只允许 [0-9a-z]（长度不限：实证 4~13 位都能加载，长度不是加载错误源）
  *  13. 登记存在性      —— package.xml 条目 path+name 指向的文件必须真实存在（移动/删除文件不同步登记，发布丢资源）
@@ -175,7 +176,7 @@ for (const [pkgDir, P] of PKGS) {
     problems++;
   }
   const byId = new Map();
-  // 带合法九宫格的包内图片：id → {name, file}（loader 装包内图会复制源图 grid，一并纳入缩小检查）
+  // 带合法九宫格的包内图片：id → {name, file, gw, gh}（loader 装包内图会复制源图 grid，一并纳入压角检查）
   const gridById = new Map();
   // STANDARDS §2.9：组件名不拼装变长——版本/复制后缀检查（Copy/Old 不查：BtnCopy、*Gold 是合法名，误报实证）
   const VER_SUFFIX = /((new|bak|final)\d*|v\d+|\(\d+\))$/i;
@@ -247,7 +248,7 @@ for (const [pkgDir, P] of PKGS) {
       } else {
         const p = (e.match(/ path="([^"]+)"/) || [])[1] || '/';
         const imgFile = path.join(assetsDir, pkgDir, p, name || '');
-        gridById.set(id, { name: name || id, file: imgFile });
+        gridById.set(id, { name: name || id, file: imgFile, gw, gh });
         const size = pngSize(imgFile);
         if (size) {
           if (gx + gw > size.w || gy + gh > size.h) {
@@ -376,7 +377,8 @@ for (const [pkgDir, P] of PKGS) {
       for (const n of line.matchAll(/name="(n\d+)"/g)) {
         console.log(`⚠ ${rel}:${ln} 子对象裸编号名 ${n[1]}（规范要求语义名）`);
       }
-      // STANDARDS §2.7：九宫格只放大不缩小——size 小于源图 = 四角块被压缩（圆角压扁/边框粗细不均）
+      // STANDARDS §2.7：使用尺寸的下限是四角宽高总和（横向=图宽−中心宽，纵向=图高−中心高）——
+      // 小于四角总和 = 角放不下被压缩（圆角压扁/边框粗细不均）；四角和~源图之间只压缩中间区，角不动
       for (const u of line.matchAll(/<(image|loader)\b[^>]*>/g)) {
         const sId = (u[0].match(/ src="([^"]+)"/) || [])[1];
         const g = sId && gridById.get(sId);
@@ -386,8 +388,10 @@ for (const [pkgDir, P] of PKGS) {
         const [w, h] = sz.split(',').map(Number);
         if (!Number.isFinite(w) || !Number.isFinite(h)) continue;
         const ps = pngSize(g.file);
-        if (ps && (w < ps.w || h < ps.h)) {
-          console.log(`✗ ${rel}:${ln} ${g.name} 带九宫格但 size="${sz}" 小于源图 ${ps.w}x${ps.h}（四角被压缩变形——只放大不缩小，见 STANDARDS §2.7）`);
+        if (!ps) continue;
+        const frameW = ps.w - g.gw, frameH = ps.h - g.gh;
+        if (w < frameW || h < frameH) {
+          console.log(`✗ ${rel}:${ln} ${g.name} 带九宫格但 size="${sz}" 小于四角宽高总和 ${frameW}x${frameH}（图 ${ps.w}x${ps.h} 中心区 ${g.gw}x${g.gh}——四角放不下被压缩变形，尺寸下限是四角总和不是源图尺寸，见 STANDARDS §2.7）`);
           problems++;
         }
       }
