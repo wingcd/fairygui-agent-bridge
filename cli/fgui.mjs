@@ -102,6 +102,41 @@ if (cmd === "sync-plugins" || cmd === "install-all") {
     process.exit(results.some(r => r.status.startsWith('error')) ? 6 : 0);
 }
 
+// lint: run the STANDARDS.md static checker locally (scripts/lint_components.mjs).
+// No editor needed - pure file audit of the project on disk.
+// usage: fgui lint '{"project":"D:/work/my-ui"}'
+if (cmd === "lint") {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const { spawn } = await import("node:child_process");
+    const a = rest.length ? JSON.parse(rest.join(" ")) : {};
+    if (!a.project) {
+        console.error(JSON.stringify({ ok: false, error: 'args.project is required (project root containing assets/)' }, null, 2));
+        process.exit(4);
+    }
+    let proj = path.resolve(String(a.project));
+    if (/\.fairy$/i.test(proj)) proj = path.dirname(proj);
+    const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "lint_components.mjs");
+    if (!fs.existsSync(script)) {
+        console.error(JSON.stringify({ ok: false, error: `lint script not found: ${script}` }, null, 2));
+        process.exit(4);
+    }
+    const child = spawn(process.execPath, [script, proj], { stdio: "inherit" });
+    // await the child: process.exit must not be scheduled async-only, or execution
+    // falls through to the editor-forwarding branch below and races the lint child.
+    try {
+        const code = await new Promise((resolve, reject) => {
+            child.once("error", reject);
+            child.once("close", (c) => resolve(c));
+        });
+        process.exit(code ?? 1);
+    } catch (e) {
+        console.error(JSON.stringify({ ok: false, error: String(e) }, null, 2));
+        process.exit(3);
+    }
+}
+
 // launch: start the editor with a project (window minimized-friendly,
 // the plugin sets runInBackground itself).
 // usage: fgui launch '{"project":"D:/work/my-ui","editor":"optional/exe/path"}'
@@ -244,6 +279,9 @@ special:
              fan <repo>/plugin out to every project in
              ~/.fgui-agent-bridge/projects.json (add/remove via
              '{"add":"D:/work/my-ui"}' / '{"remove":"..."}')
+  lint       run the STANDARDS.md checker locally on a project - no editor
+             needed. e.g. fgui lint '{"project":"D:/work/my-ui"}'
+             exit 0 = clean, 1 = blocking issues found (see report)
 
 examples:
   fgui ping

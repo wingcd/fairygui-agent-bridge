@@ -81,6 +81,7 @@ node cli/fgui.mjs ping
 node cli/fgui.mjs list-items '{"pkg":"common","depth":2}'
 node cli/fgui.mjs set-property '{"pkg":"common","name":"Demo","target":"n0","props":{"title":"开始游戏"}}'
 node cli/fgui.mjs publish '{"pkg":"common"}'
+node cli/fgui.mjs lint '{"project":"D:/work/my-ui"}'   # STANDARDS 静态检查（本地跑，编辑器不用开）
 ```
 
 **MCP（推荐给 AI 客户端）：**
@@ -96,7 +97,7 @@ node cli/fgui.mjs publish '{"pkg":"common"}'
 }
 ```
 
-AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件 XML（拿到子对象名/id）→ `create_component` / `insert_object` / `set_property` 摆 UI → `publish` 出包 → 游戏侧加载验证。
+AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件 XML（拿到子对象名/id）→ `create_component` / `insert_object` / `set_property` 摆 UI → `lint` 静态自查（引用悬空/缺 exported/不必要嵌套/磁盘孤儿等 21 项，见 STANDARDS.md）→ `publish` 出包 → 游戏侧加载验证。
 
 ## 命令参考
 
@@ -124,6 +125,8 @@ AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件
 | `bridge_log` | `tail?` | 插件日志尾部（排障） |
 
 属性名与编辑器属性面板/XML 属性一致（`xy`/`size`/`title`/`text`/`icon`/`fontSize`/`visible`/`pivot`/`anchor`…），向量值用 `"x,y"` 字符串形式。参考：编辑器插件 API 的权威定义见官方仓库 [fairygui/FairyGUI-Editor](https://github.com/fairygui/FairyGUI-Editor) 的 `plugin/TsAPI/editor.d.ts`（许可证未标明，故本仓库不复制该文件）。
+
+**本地命令（不经编辑器）**：`lint`——`node cli/fgui.mjs lint '{"project":"<工程根>"}'`（MCP 同名工具），跑 `scripts/lint_components.mjs` 的 21 项 STANDARDS 检查：✗ 阻断（引用悬空含 icon/titleIcon/sound/font、缺 exported、死登记、发明标签、包 id 位数、九宫格越界/压角…）退出码 1；⚠ 提醒（命名、单件转发层、磁盘孤儿、单选未关联 controller、全屏贴底漏绑…）不阻断。上表 HTTP 命令不含 lint——它是磁盘审计，不需要编辑器在线。
 
 ## 同时编辑多个项目（多编辑器实例）
 

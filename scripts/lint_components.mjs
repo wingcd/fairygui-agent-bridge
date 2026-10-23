@@ -29,6 +29,10 @@
  *                         退化为代码手工管理，STANDARDS §2.13）
  *  19. 全屏贴底漏绑    —— 警告：全屏量级组件里贴底元素未绑 bottom 类 relation 也未入绑底的组
  *                         （FitWidth 适配下底部悬空露边，STANDARDS §2.14）
+ *  20. 单件转发层      —— 警告：displayList 只有一个 component 且无 extention/controller/transition/gear
+ *                         （组件包组件纯转发：使用方可直接引用内层组件，STANDARDS §2.16）
+ *  21. 磁盘孤儿        —— 警告：编辑器可消费类型文件（图片/音频/ttf/xml）在包目录里但 package.xml
+ *                         未登记——编辑器看不见、发布不带（STANDARDS §2.15 形态③）
  *
  * 白名单依据：官方编辑器自身工程（fairygui/FairyGUI-Editor 仓库 288 个 XML）全量普查
  * + 官方 demo 工程交叉验证，见 STANDARDS.md §2.6。id/目录约定依据本机生产工程
@@ -42,7 +46,12 @@
  * 反例（Catalog/RacePreparation/Settings 十余 radio 实例零关联）+ 挪一挪猪正例
  * （AchievementWindow `<Button controller="mode" page="N"/>`）实证，见 STANDARDS.md §2.13。
  * 贴底绑定依据 BricksBreakerRPG Stash（改后全链路正例）vs Shop（全裸放反例）+ 锦鹏系
- * 5 工程窗口式 UI 零命中实证，见 STANDARDS.md §2.14。
+ * 5 工程窗口式 UI 零命中实证，见 STANDARDS.md §2.14。单件转发层依据 kaizong_lipai
+ * （CopyCat 导出）22 个纯包装实证（ren-001/node_* 只带一份实例变换属性）+ 手作 5 工程
+ * 零命中（唯一同形态 EffectContainer 带 extention="Label" 被逻辑豁免）；引用链深实证
+ * 手作 ≤3、导出复原工程到 5，见 STANDARDS.md §2.16。磁盘孤儿依据挪一挪猪
+ * game/images/dycollect/2.jpg 真实存量 + 6 工程其余零误报（登记 path 大小写与磁盘
+ * 不一致的生产脏数据实证——对账必须大小写不敏感），见 STANDARDS.md §2.15。
  *
  * 退出码：有问题=1（可配合 CI/预提交拦截），干净=0
  */
@@ -149,6 +158,9 @@ for (const pkgDir of fs.readdirSync(assetsDir)) {
 // "component 引用是不是单选实例"必须反查目标皮肤件（跨包引用一并覆盖）。
 const walkXml = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
   d.isDirectory() ? walkXml(path.join(dir, d.name)) : d.name.endsWith('.xml') ? [path.join(dir, d.name)] : []);
+// 全文件遍历（跳隐藏文件/目录）——磁盘孤儿对账用（§2.15 形态③）
+const walkFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+  d.name.startsWith('.') ? [] : d.isDirectory() ? walkFiles(path.join(dir, d.name)) : [path.join(dir, d.name)]);
 const radioSkins = new Map();
 for (const [pd, P] of PKGS) {
   const compRoot = path.join(assetsDir, pd, 'components');
@@ -265,6 +277,22 @@ for (const [pkgDir, P] of PKGS) {
   for (const [dir, n] of compPerPath) {
     if (n > 25) {
       console.log(`⚠ ${pkgDir}/package.xml: ${dir === '/' ? '根目录' : dir} 平铺 ${n} 个组件（>25，生产普查单文件夹最多 21——按模块拆子文件夹，见 STANDARDS §1/§2.9）`);
+    }
+  }
+
+  // STANDARDS §2.15 形态③：磁盘孤儿——与检查 13（登记了但文件不在）合成双向对账。只查编辑器
+  // 可消费类型（图片/音频/ttf 字体/xml 组件）；.fui/.json 等发布产物或杂物编辑器本就不导入，不报。
+  // 对账必须大小写不敏感：生产实证登记 path="/images/dyCollect/" 与磁盘 dycollect/ 并存（挪一挪猪）。
+  {
+    const regFiles = new Set([...pathOf.values()].filter(Boolean).map((v) => v.toLowerCase()));
+    const CONSUMABLE = new Set(['png', 'jpg', 'jpeg', 'svg', 'jta', 'mp3', 'wav', 'ttf', 'xml']);
+    const pkgRoot = path.join(assetsDir, pkgDir);
+    for (const f of walkFiles(pkgRoot)) {
+      const rel = path.relative(pkgRoot, f).split(path.sep).join('/').toLowerCase();
+      if (rel === 'package.xml' || !CONSUMABLE.has(rel.split('.').pop())) continue;
+      if (!regFiles.has(rel)) {
+        console.log(`⚠ ${pkgDir}/${rel} 磁盘孤儿（文件在包目录但 package.xml 未登记——编辑器看不见、发布不带；要么关编辑器补登记再重启加载，要么删掉，见 STANDARDS §2.15）`);
+      }
     }
   }
 
@@ -401,9 +429,13 @@ for (const [pkgDir, P] of PKGS) {
     if (objCount > 80) {
       console.log(`⚠ ${rel} 显示对象 ${objCount} 个（>80，把资源堆一个组件了——按页面/复用件/cell 拆，见 STANDARDS §2）`);
     }
-    // STANDARDS §2.10：单图纯转发层——displayList 只有一个 image 且无 extention/controller/transition/gear。
-    // 包一层不新增任何能力（image 本身有 color/alpha/size/scale9grid/relations/gear），却多一份登记、深一层引用。
-    // 依据：taptap_maker 导出器残留 lbl_info1.xml + 生产存量 Reddot.xml（每包 1~2 个，容忍不再新增）。
+    // STANDARDS §2.10/§2.16：单件纯转发层——displayList 只有一个 image 或 component 且无
+    // extention/controller/transition/gear。包一层不新增任何能力（image 本身有 color/alpha/size/
+    // scale9grid/relations/gear；component 实例自带 xy/scale/pivot/size——"只带一份变换属性"
+    // 不是包装理由），却多一份登记、深一层引用链（改内层要穿透两层）。graph/loader/text 等
+    // 单件另有语义（占位槽/头像槽），不查（§2.10 边界）。
+    // 依据：taptap_maker 导出器残留 lbl_info1.xml + 生产存量 Reddot.xml（每包 1~2 个，容忍不再新增）；
+    // 组件包组件形态 kaizong_lipai 22 个（ren-001/node_*）实证，手作 5 工程零命中。
     // 只查文件里恰一个 displayList 且无 list/item 内联（嵌套 displayList 会数错直接子件）。
     if ((src.match(/<displayList>/g) || []).length === 1) {
       const dl = src.match(/<displayList>([\s\S]*?)<\/displayList>/);
@@ -411,8 +443,11 @@ for (const [pkgDir, P] of PKGS) {
         const kids = [...dl[1].matchAll(/<([a-zA-Z][a-zA-Z0-9]*)[\s/>]/g)].map((m) => m[1]).filter((t) => OBJ_TAGS.has(t));
         // 扩展元素首字母大写（<Button>…），与对象标签 <button> 不冲突；gearXY/gearDisplay 等以 gear+大写开头
         const noLogic = !/extention=|<controller|<transition|<action|gear[A-Z]|<(?:Button|Label|ComboBox|ProgressBar|Slider|ScrollBar|List|Tree)\b/.test(src);
-        if (kids.length === 1 && kids[0] === 'image' && noLogic) {
-          console.log(`⚠ ${rel} 单图纯转发组件（displayList 只有一个 image、无 extention/controller/transition/gear——直接在使用方 <image src=>，包装层零能力纯开销，见 STANDARDS §2.10）`);
+        if (kids.length === 1 && noLogic && (kids[0] === 'image' || kids[0] === 'component')) {
+          const why = kids[0] === 'image'
+            ? 'displayList 只有一个 image、无 extention/controller/transition/gear——直接在使用方 <image src=>，见 STANDARDS §2.10'
+            : 'displayList 只有一个 component、无 extention/controller/transition/gear——使用方可直接引用内层组件（xy/scale/pivot/size 是实例属性，写在引用处即可），见 STANDARDS §2.16';
+          console.log(`⚠ ${rel} 单件纯转发组件（${why}）`);
         }
       }
     }

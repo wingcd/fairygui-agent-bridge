@@ -8,6 +8,10 @@
 //   FGUI_BRIDGE_URL   default http://localhost:7531/
 
 import process from "node:process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
 import readline from "node:readline";
 import { discover, route, request, stripSelector } from '../cli/instances.mjs';
 
@@ -59,6 +63,23 @@ const TOOLS = {
                 file: { type: S("string"), description: "output xml path (absolute); default <project>/strings.xml" },
             },
             [],
+        ),
+    },
+    lint: {
+        description:
+            "Run the STANDARDS.md static checker (scripts/lint_components.mjs) on a project - LOCAL file audit, " +
+            "no running editor needed. Use it before publish and after batch edits. Blocking issues (ok=false, exit 1): " +
+            "dangling ui:// refs incl. icon/titleIcon/sound/font, missing exported=\"true\", dead registrations, " +
+            "invented tags/extentions, bad package ids, scale9grid out of bounds. Warnings (advisory): naming, " +
+            "single-child wrapper components (unnecessary nesting), disk orphans (files not registered), " +
+            "radio instances without controller binding, fullscreen bottom elements without relations. " +
+            "Read STANDARDS.md sections referenced in each message for the fix.",
+        inputSchema: obj(
+            {
+                project: { type: S("string"), description: "project root dir containing assets/ (or its .fairy path)" },
+                timeout_ms: { type: S("number"), description: "default 120000" },
+            },
+            ["project"],
         ),
     },
     read_component: {
@@ -171,7 +192,7 @@ const TOOLS = {
 };
 
 for (const [name, tool] of Object.entries(TOOLS)) {
-    if (name === 'discover_projects') continue;
+    if (name === 'discover_projects' || name === 'lint') continue;
     Object.assign(tool.inputSchema.properties, {
         project: {type: 'string', description: 'Target project absolute directory/.fairy path (recommended), or unique project name'},
         port: {type: 'integer', minimum: 1, maximum: 65535, description: 'Target editor bridge port'},
@@ -183,8 +204,33 @@ for (const [name, tool] of Object.entries(TOOLS)) {
 
 async function callBridge(cmd, args) {
     if (cmd === 'discover_projects') return {ok: true, data: await discover()};
+    if (cmd === 'lint') return runLint(args);
     const instance = await route(args);
     return request(instance.url, cmd, stripSelector(args), Math.max(10000, (Number(args.timeout_ms) || 45000) + 5000));
+}
+
+// lint runs locally against the project on disk (scripts/lint_components.mjs);
+// ok=false + exitCode 1 means blocking issues are listed in the report, exit 2 = no assets/.
+function runLint(args) {
+    if (!args.project) return Promise.resolve({ok: false, error: 'project is required (root dir containing assets/, or its .fairy path)'});
+    let proj = path.resolve(String(args.project));
+    if (/\.fairy$/i.test(proj)) proj = path.dirname(proj);
+    const script = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'lint_components.mjs');
+    if (!fs.existsSync(script)) return Promise.resolve({ok: false, error: `lint script not found: ${script}`});
+    return new Promise((resolve) => {
+        const child = spawn(process.execPath, [script, proj], { timeout: Number(args.timeout_ms) || 120000 });
+        let out = '', err = '';
+        child.stdout.on('data', (d) => { out += d; });
+        child.stderr.on('data', (d) => { err += d; });
+        child.on('close', (code) => resolve({
+            ok: code === 0,
+            exitCode: code,
+            project: proj,
+            report: out.trim(),
+            ...(err.trim() ? { stderr: err.trim() } : {}),
+        }));
+        child.on('error', (e) => resolve({ok: false, error: String(e)}));
+    });
 }
 
 // ---- JSON-RPC over stdio ----
