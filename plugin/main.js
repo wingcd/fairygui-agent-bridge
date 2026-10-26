@@ -26,7 +26,7 @@
 // Protocol: POST with JSON body  {"cmd": "<command>", "args": {...}}
 // Response: JSON {"ok": true, "data": ...} or {"ok": false, "error": "..."}
 
-var VERSION = "0.3.0";
+var VERSION = "0.3.1";
 
 var FairyGUI = CS.FairyGUI;
 var FairyEditor = CS.FairyEditor;
@@ -41,6 +41,8 @@ var Bridge = {
     queue: [],             // [{ctx, cmd, args}]
     current: null,         // command being executed across frames (publish)
     wantServer: false,     // start/restart the listener on the next frame tick
+    destroyed: false,
+    toolMenu: null,
     port: undefined,       // port we actually bound (set by startServer)
     logLines: []
 };
@@ -444,7 +446,8 @@ function startPublish(job) {
     job.handler = handler;
     job.done = false;
     job.files = [];
-    handler.add_onComplete(function () {
+    job.onComplete = function () {
+        if (Bridge.destroyed || job.cancelled) return;
         job.done = true;
         job.isSuccess = handler.isSuccess;
         job.exportPath = handler.exportPath;
@@ -452,7 +455,8 @@ function startPublish(job) {
             var files = CS.System.IO.Directory.GetFiles(handler.exportPath);
             for (var i = 0; i < files.Length; i++) job.files.push(files.GetValue(i));
         } catch (e) { }
-    });
+    };
+    handler.add_onComplete(job.onComplete);
     var t0 = Date.now();
     job.t0 = t0;
     handler.Run(); // hot task; onComplete marks completion
@@ -464,10 +468,20 @@ function stepPublish(job) {
         return ok({ isSuccess: job.isSuccess, elapsedMs: Date.now() - job.t0, files: job.files });
     }
     if (Date.now() > job.deadline) {
-        try { job.handler.Exit(); } catch (e) { }
         return fail("publish timed out after " + (Date.now() - job.t0) + "ms");
     }
     return null; // keep waiting, called again next frame
+}
+
+function releasePublish(job, cancel) {
+    if (job.handler == null) return;
+    job.cancelled = !!cancel;
+    try { job.handler.remove_onComplete(job.onComplete); } catch (e) { }
+    if (cancel) {
+        try { job.handler.Exit(); } catch (e) { }
+    }
+    job.onComplete = null;
+    job.handler = null;
 }
 
 // ---------------- async command registry ----------------
@@ -534,21 +548,25 @@ function projectLabel() {
 // ---------------- HTTP plumbing (main thread only) ----------------
 
 function startServer() {
+    if (Bridge.destroyed || Bridge.listener != null) return false;
     var wanted = readPort();
     var maxTries = 21; // e.g. 7531..7551
     for (var port = wanted; port < wanted + maxTries; port++) {
+        var listener = null;
         try {
-            var listener = new CS.System.Net.HttpListener();
+            listener = new CS.System.Net.HttpListener();
             listener.Prefixes.Add("http://localhost:" + port + "/");
             listener.Start();
+            var pendingAccept = listener.BeginGetContext(null, null);
             Bridge.listener = listener;
             Bridge.port = port;
-            Bridge.pendingAccept = listener.BeginGetContext(null, null);
+            Bridge.pendingAccept = pendingAccept;
             instanceRegister(port);
             plog("listening on http://localhost:" + port + "/ v" + VERSION
                 + (port !== wanted ? " (default port busy, auto-picked)" : ""));
             return true;
         } catch (e) {
+            try { if (listener != null) listener.Close(); } catch (closeError) { }
             // port busy or listener error - try the next port
         }
     }
@@ -633,6 +651,7 @@ function stepQueue() {
         var job = Bridge.current;
         var out = ASYNC_STEPPERS[job.cmd](job);
         if (out !== null && out !== undefined) {
+            releasePublish(job, !job.done);
             writeResponse(job.ctx, 200, out);
             Bridge.current = null;
         }
@@ -647,6 +666,7 @@ function stepQueue() {
             ASYNC_STARTERS[cmd](job);
             Bridge.current = job;
         } catch (e) {
+            releasePublish(job, true);
             writeResponse(next.ctx, 200, fail(cmd + ": " + e));
         }
         return;
@@ -667,6 +687,7 @@ function stepQueue() {
 }
 
 function onUpdate() {
+    if (Bridge.destroyed) return;
     // Start/restart the server here, never from the onProjectOpened callback
     // (see the startup model note in the header comment).
     if (Bridge.wantServer) {
@@ -684,24 +705,20 @@ function boot() {
     try { CS.UnityEngine.Application.runInBackground = true; } catch (e) {
         plog("runInBackground not settable: " + e);
     }
-    if (App.project != null) {
-        Bridge.wantServer = true;
-    } else {
-        App.add_onProjectOpened(function () { Bridge.wantServer = true; });
-    }
+    Bridge.wantServer = App.project != null;
+    App.add_onProjectOpened(onProjectOpened);
+    App.add_onProjectClosed(onProjectClosed);
     App.add_onUpdate(onUpdate);
     // convenience menu item
     try {
         var toolMenu = App.menu.GetSubMenu("tool");
+        Bridge.toolMenu = toolMenu;
         toolMenu.AddItem("Agent bridge: restart server", "agentbridge_restart", function () {
             if (Bridge.current != null) {
                 plog('restart deferred: a command is still running');
                 return;
             }
-            try { if (Bridge.listener != null) Bridge.listener.Close(); } catch (e) { }
-            Bridge.listener = null;
-            Bridge.pendingAccept = null;
-            try { instanceUnregister(); } catch (e) { }
+            stopServer();
             Bridge.wantServer = true; // picked up on the next frame tick
         });
     } catch (e) {
@@ -709,9 +726,49 @@ function boot() {
     }
 }
 
-boot();
+function onProjectOpened() {
+    if (!Bridge.destroyed) Bridge.wantServer = true;
+}
+
+function onProjectClosed() {
+    stopServer();
+}
+
+function stopServer() {
+    Bridge.wantServer = false;
+    if (Bridge.current != null) {
+        var job = Bridge.current;
+        Bridge.current = null;
+        releasePublish(job, true);
+        writeResponse(job.ctx, 503, fail("project closed or bridge stopped"));
+    }
+    var queued = Bridge.queue;
+    Bridge.queue = [];
+    for (var i = 0; i < queued.length; i++) {
+        writeResponse(queued[i].ctx, 503, fail("project closed or bridge stopped"));
+    }
+    instanceUnregister();
+    var listener = Bridge.listener;
+    Bridge.listener = null;
+    Bridge.pendingAccept = null;
+    Bridge.port = undefined;
+    try { if (listener != null) listener.Close(); } catch (e) { }
+}
 
 function onDestroy() {
-    try { instanceUnregister(); } catch (e) { }
-    try { if (Bridge.listener != null) Bridge.listener.Close(); } catch (e) { }
+    if (Bridge.destroyed) return;
+    Bridge.destroyed = true;
+    // Unhook native delegates before the host disposes this plugin's JS env.
+    try { App.remove_onUpdate(onUpdate); } catch (e) { }
+    try { App.remove_onProjectOpened(onProjectOpened); } catch (e) { }
+    try { App.remove_onProjectClosed(onProjectClosed); } catch (e) { }
+    try {
+        if (Bridge.toolMenu != null) Bridge.toolMenu.RemoveItem("agentbridge_restart");
+    } catch (e) { }
+    Bridge.toolMenu = null;
+    stopServer();
 }
+
+// Puerts loads this file as a CommonJS module; lifecycle hooks must be exported.
+exports.onDestroy = onDestroy;
+boot();
