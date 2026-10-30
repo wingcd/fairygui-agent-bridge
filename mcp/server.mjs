@@ -72,7 +72,10 @@ const TOOLS = {
             "dangling ui:// refs incl. icon/titleIcon/sound/font, missing exported=\"true\", dead registrations, " +
             "invented tags/extentions, bad package ids, scale9grid out of bounds. Warnings (advisory): naming, " +
             "single-child wrapper components (unnecessary nesting), disk orphans (files not registered), " +
-            "radio instances without controller binding, fullscreen bottom elements without relations. " +
+            "radio instances without controller binding, fullscreen bottom elements without relations, " +
+            "text overflow handling (missing/invalid autoSize, static text wider than its fixed single-line box). " +
+            "Translation tables (strings.xml + strings_<lang>.xml in project root or export/) are audited " +
+            "automatically when present: key coverage, {{template}}/[UBB] modifier consistency, untranslated entries. " +
             "Read STANDARDS.md sections referenced in each message for the fix.",
         inputSchema: obj(
             {

@@ -97,7 +97,7 @@ node cli/fgui.mjs lint '{"project":"D:/work/my-ui"}'   # STANDARDS 静态检查�
 }
 ```
 
-AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件 XML（拿到子对象名/id）→ `create_component` / `insert_object` / `set_property` 摆 UI → `lint` 静态自查（引用悬空/缺 exported/不必要嵌套/磁盘孤儿等 21 项，见 STANDARDS.md）→ `publish` 出包 → 游戏侧加载验证。
+AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件 XML（拿到子对象名/id）→ `create_component` / `insert_object` / `set_property` 摆 UI → `lint` 静态自查（引用悬空/缺 exported/不必要嵌套/磁盘孤儿/文本溢出/翻译表对账等 27 项，见 STANDARDS.md）→ `publish` 出包 → 游戏侧加载验证。
 
 ## 命令参考
 
@@ -126,7 +126,7 @@ AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件
 
 属性名与编辑器属性面板/XML 属性一致（`xy`/`size`/`title`/`text`/`icon`/`fontSize`/`visible`/`pivot`/`anchor`…），向量值用 `"x,y"` 字符串形式。参考：编辑器插件 API 的权威定义见官方仓库 [fairygui/FairyGUI-Editor](https://github.com/fairygui/FairyGUI-Editor) 的 `plugin/TsAPI/editor.d.ts`（许可证未标明，故本仓库不复制该文件）。
 
-**本地命令（不经编辑器）**：`lint`——`node cli/fgui.mjs lint '{"project":"<工程根>"}'`（MCP 同名工具），跑 `scripts/lint_components.mjs` 的 21 项 STANDARDS 检查：✗ 阻断（引用悬空含 icon/titleIcon/sound/font、缺 exported、死登记、发明标签、包 id 位数、九宫格越界/压角…）退出码 1；⚠ 提醒（命名、单件转发层、磁盘孤儿、单选未关联 controller、全屏贴底漏绑…）不阻断。上表 HTTP 命令不含 lint——它是磁盘审计，不需要编辑器在线。
+**本地命令（不经编辑器）**：`lint`——`node cli/fgui.mjs lint '{"project":"<工程根>"}'`（MCP 同名工具），跑 `scripts/lint_components.mjs` 的 27 项 STANDARDS 检查：✗ 阻断（引用悬空含 icon/titleIcon/sound/font、缺 exported、死登记、发明标签、包 id 位数、九宫格越界/压角…）退出码 1；⚠ 提醒（命名、单件转发层、磁盘孤儿、单选未关联 controller、全屏贴底漏绑、文本 autoSize 未声明/非法值/静态现溢出…）不阻断；工程根或 export/ 下发现 `strings.xml` + `strings_语种.xml` 时自动对账翻译表（键覆盖/`{{模板}}`与 UBB 修饰一致/未翻，检查 25~27，STANDARDS §7，也可独立跑 `node scripts/lint_strings.mjs 源.xml 译文.xml…`）。上表 HTTP 命令不含 lint——它是磁盘审计，不需要编辑器在线。
 
 ## 同时编辑多个项目（多编辑器实例）
 

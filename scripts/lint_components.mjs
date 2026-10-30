@@ -18,8 +18,10 @@
  *   9. 九宫格越界      —— scale9grid 格式非法或中心区超出图片实际尺寸（读 png 头对账，STANDARDS §2.7）
  *  10. 九宫格压角      —— 带九宫格的图显示 size 小于四角宽高总和（图尺寸−中心区：四角放不下被压缩变形；
  *                         四角和~源图之间只压中间区角不动，合法。STANDARDS §2.7）
- *  11. 包 id 格式      —— packageDescription id 必须恰为 8 位 [0-9a-z]（ui:// 定长保留位；kzlpcommon 10 字符事故，STANDARDS §2.8）
- *  12. 资源 id 字符集  —— package.xml 条目 id 只允许 [0-9a-z]（长度不限：实证 4~13 位都能加载，长度不是加载错误源）
+ *  11. 包 id 格式      —— packageDescription id 必须恰为 8 位 [0-9a-z]（ui:// 定长保留位；kzlpcommon 10 字符事故，STANDARDS §2.8）；
+ *                         全工程包 id 查重（两包同 id = ui:// 解析二义）
+ *  12. 资源 id 字符集  —— package.xml 条目 id 只允许 [0-9a-z]（长度不限：实证 4~13 位都能加载，长度不是
+ *                         加载错误源）；包内 id 查重（同包两条同 id = 登记歧义）
  *  13. 登记存在性      —— package.xml 条目 path+name 指向的文件必须真实存在（移动/删除文件不同步登记，发布丢资源）
  *  14. fileName 对账   —— 警告：组件 XML fileName 与 src 登记路径不一致（编辑器按 src 定位仍可加载，但合并/移动后必须同步）
  *  15. 组件命名拼装    —— 警告：组件名 >28 字/版本复制后缀/同文件夹同名双登记/单文件夹组件 >25（STANDARDS §2.9）
@@ -33,6 +35,17 @@
  *                         （组件包组件纯转发：使用方可直接引用内层组件，STANDARDS §2.16）
  *  21. 磁盘孤儿        —— 警告：编辑器可消费类型文件（图片/音频/ttf/xml）在包目录里但 package.xml
  *                         未登记——编辑器看不见、发布不带（STANDARDS §2.15 形态③）
+ *  22. 导出标记        —— 每条登记必须 exported="true"（发布只收导出资源，缺=加载正常但发布
+ *                         静默丢——组件丢失事故；跨包引用/列表 defaultItem 同理依赖它）
+ *  23. 溢出处理声明    —— 警告：text 缺 autoSize（未声明，翻译变长/运行时填长文本会溢出）或值
+ *                         非法（合法值 none/shrink/height/both——枚举当布尔写的 autoSize="true"
+ *                         生产实证 18 处，STANDARDS §2.17）
+ *  24. 静态文本现溢出  —— 警告：autoSize=none 固定框 + singleLine 禁换行 + 静态文本估宽超框 15%
+ *                         （中文按 fontSize、西文按 0.6×fontSize 计；位图字体/模板变量不查，§2.17）
+ *  25~27. 翻译表对账   —— 警告：工程根/export/ 下有 export_strings 产物（strings.xml 源 +
+ *                         strings_<语言>.xml 译文）时自动纳入——键覆盖（漏翻/残留）、修饰一致
+ *                         （{{模板变量}}/[UBB标签] 跨语言集合比对）、译文雷同未翻
+ *                         （scripts/lint_strings.mjs，STANDARDS §7；无译文文件不查不报）
  *
  * 白名单依据：官方编辑器自身工程（fairygui/FairyGUI-Editor 仓库 288 个 XML）全量普查
  * + 官方 demo 工程交叉验证，见 STANDARDS.md §2.6。id/目录约定依据本机生产工程
@@ -57,6 +70,16 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+
+// XML 实体解码（text 属性值比对/估宽用；数字与五命名实体足够覆盖编辑器产出）
+function decodeEntities(s) {
+  return s
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(parseInt(d, 10)))
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
 
 // STANDARDS.md §2.6：FairyGUI 对象类型封闭集合，禁止发明
 // displayList 显示对象标签（10 种）
@@ -423,6 +446,33 @@ for (const [pkgDir, P] of PKGS) {
           problems++;
         }
       }
+      // STANDARDS §2.17：文本溢出处理必须声明——编辑器手作件 96% 都写 autoSize（生产普查
+      // 227/235），缺的多是 AI/手改件；值域封闭 none/shrink/height/both（2875/625/2 实证 +
+      // both 为编辑器"宽高"档），枚举当布尔写的 autoSize="true" 生产实证 18 处——运行时按
+      // 缺省处理、编辑器重存即洗掉，写了等于没写。
+      for (const t of line.matchAll(/<text\b[^>]*>/g)) {
+        const tag = t[0];
+        const as = (tag.match(/ autoSize="([^"]*)"/) || [])[1];
+        const nm = (tag.match(/ name="([^"]+)"/) || [])[1] || (tag.match(/ id="([^"]+)"/) || [])[1] || 'text';
+        if (as === undefined) {
+          console.log(`⚠ ${rel}:${ln} text "${nm}" 未声明 autoSize（none 固定框/shrink 缩字号/height 加高/both 宽高自适应——不写=未声明，翻译变长或运行时填长文本会溢出，见 STANDARDS §2.17）`);
+        } else if (!/^(none|shrink|height|both)$/.test(as)) {
+          console.log(`⚠ ${rel}:${ln} text "${nm}" autoSize="${as}" 非法（合法值 none/shrink/height/both——枚举不是布尔，true 按缺省处理、编辑器重存即被洗掉，见 STANDARDS §2.17）`);
+        } else if (as === 'none' && / singleLine="true"/.test(tag)) {
+          // §2.17 现溢出：固定框 + 禁换行 + 静态文本估宽超框——当下可见的溢出，不是翻译假设。
+          // 估宽：中文/全角按 fontSize、西文按 0.6×fontSize（Arial 均值）；位图字体（font=ui://）
+          // 度量未知、{{模板}} 长度运行时定，都不查；超框 15% 才报，给估算留余量压误报。
+          const box = (tag.match(/ size="(\d+),\d+"/) || [])[1];
+          const fsz = Number((tag.match(/ fontSize="(\d+)"/) || [])[1] || 12);
+          const txt = decodeEntities((tag.match(/ text="([^"]*)"/) || [])[1] || '');
+          if (box && fsz && txt && !/\{\{/.test(txt) && !/ font="ui:\/\//.test(tag)) {
+            const est = [...txt].reduce((w, ch) => w + (ch.charCodeAt(0) > 0x2e7f ? fsz : fsz * 0.6), 0);
+            if (est > Number(box) * 1.15) {
+              console.log(`⚠ ${rel}:${ln} text "${nm}" 静态文本估宽 ${Math.round(est)} 超框宽 ${box}（autoSize=none 固定框 + singleLine 禁换行——中文按 ${fsz}px 西文按 ${Math.round(fsz * 0.6)}px 估、超 15% 报；缩字号 shrink 或放宽框，见 STANDARDS §2.17）`);
+            }
+          }
+        }
+      }
     });
     // STANDARDS §2：禁止把所有资源堆进一个组件——显示对象超限说明该拆 cell/子组件
     const objCount = (src.match(/<(?:image|graph|loader|loader3D|text|richtext|list|component|jta|group)[\s/>]/g) || []).length;
@@ -535,6 +585,24 @@ for (const [pkgDir, P] of PKGS) {
       }
     }
   }
+}
+
+// STANDARDS §7：翻译表对账——工程根或 export/ 下有 export_strings 产物（strings.xml 源 +
+// strings_<语言>.xml 译文，arrow_line 根下 / sort_up export/ 两种布局实证）就顺带查。
+// 检查 25~27 全部 ⚠ 不计 problems（漏翻/残留不阻断加载）；无译文文件不查不报。
+try {
+  for (const dir of [root, path.join(root, 'export')]) {
+    const srcF = path.join(dir, 'strings.xml');
+    if (!fs.existsSync(srcF)) continue;
+    const trans = fs.readdirSync(dir).filter((f) => /^strings_.+\.xml$/.test(f)).map((f) => path.join(dir, f));
+    if (!trans.length) continue;
+    const { lintStrings } = await import('./lint_strings.mjs');
+    const msgs = lintStrings(srcF, trans);
+    for (const m of msgs) console.log(m);
+    if (!msgs.length) console.log(`✓ 翻译表对账通过（${path.relative(root, srcF)} × ${trans.length} 语种，检查 25~27）`);
+  }
+} catch { /* lint_strings.mjs 缺失或翻译表解析异常：不阻断资产检查 */
+
 }
 
 console.log(problems ? `\n${problems} 个问题（✗ 阻断项）` : '\n✓ 全部通过');
