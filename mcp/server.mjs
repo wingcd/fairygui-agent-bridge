@@ -13,7 +13,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
-import { discover, route, request, stripSelector } from '../cli/instances.mjs';
+import { discover, route, request, stripSelector, commandTimeout } from '../cli/instances.mjs';
 
 const BASE = process.env.FGUI_BRIDGE_URL || "http://localhost:7531/";
 
@@ -209,7 +209,7 @@ async function callBridge(cmd, args) {
     if (cmd === 'discover_projects') return {ok: true, data: await discover()};
     if (cmd === 'lint') return runLint(args);
     const instance = await route(args);
-    return request(instance.url, cmd, stripSelector(args), Math.max(10000, (Number(args.timeout_ms) || 45000) + 5000));
+    return request(instance.url, cmd, stripSelector(args), commandTimeout(cmd, args));
 }
 
 // lint runs locally against the project on disk (scripts/lint_components.mjs);

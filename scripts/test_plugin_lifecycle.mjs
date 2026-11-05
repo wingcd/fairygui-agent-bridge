@@ -97,6 +97,22 @@ assert.equal(listeners.length, count);
 plugin.exports.onDestroy();
 assertReleased(plugin);
 
+// Health checks must bypass a running asynchronous publish and its queue.
+const healthPlugin = load({name: 'test', allPackages: {Count: 0, get_Item() {}}});
+tick();
+const replies = [];
+healthPlugin.readBody = ctx => JSON.stringify({cmd: ctx.cmd});
+healthPlugin.writeResponse = (ctx, status, body) => replies.push({cmd: ctx.cmd, status, body});
+healthPlugin.Bridge.current = {cmd: 'publish'};
+healthPlugin.handleRequest({Request: {HttpMethod: 'POST'}, cmd: 'ping'});
+healthPlugin.handleRequest({Request: {HttpMethod: 'POST'}, cmd: 'project_info'});
+assert.equal(replies.length, 2);
+assert(replies.every(reply => reply.body.ok));
+assert.equal(healthPlugin.Bridge.queue.length, 0);
+healthPlugin.Bridge.current = null;
+healthPlugin.exports.onDestroy();
+assertReleased(healthPlugin);
+
 // A listener that starts but fails to arm must also be closed before retrying.
 failAccept = true;
 const retryPlugin = load();

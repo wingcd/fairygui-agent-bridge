@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {discover, selectInstance, request, stripSelector, normalizeProject} from '../cli/instances.mjs';
+import {discover, selectInstance, request, stripSelector, normalizeProject, commandTimeout} from '../cli/instances.mjs';
 
 const observed = [];
 const servers = [];
@@ -21,6 +21,9 @@ async function editor(project, projectPath) {
     servers.push(server); return {port: server.address().port};
 }
 try {
+    assert.equal(commandTimeout('publish'), 125000);
+    assert.equal(commandTimeout('publish', {timeout_ms: 180000}), 185000);
+    assert.equal(commandTimeout('ping'), 50000);
     const entries = await Promise.all([editor('ui', '/games/a/ui'), editor('ui', '/games/b/ui')]);
     const instances = await discover({entries, fallback: null});
     assert.equal(instances.length, 2);

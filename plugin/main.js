@@ -642,6 +642,12 @@ function handleRequest(ctx) {
         writeResponse(ctx, 400, fail("body must be JSON like {\"cmd\":..., \"args\":{...}}"));
         return;
     }
+    // Discovery must remain responsive while an asynchronous publish is active.
+    if (msg.cmd === "ping" || msg.cmd === "project_info") {
+        try { writeResponse(ctx, 200, COMMANDS[msg.cmd](msg.args || {})); }
+        catch (e) { writeResponse(ctx, 200, fail(msg.cmd + ": " + e)); }
+        return;
+    }
     Bridge.queue.push({ ctx: ctx, cmd: String(msg.cmd), args: msg.args || {} });
 }
 

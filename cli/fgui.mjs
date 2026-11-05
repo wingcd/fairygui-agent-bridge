@@ -13,7 +13,7 @@
 //   FGUI_BRIDGE_URL   default http://localhost:7531/
 
 import process from "node:process";
-import { discover, route, request, stripSelector, registryDir } from './instances.mjs';
+import { discover, route, request, stripSelector, registryDir, commandTimeout } from './instances.mjs';
 
 const BASE = process.env.FGUI_BRIDGE_URL || "http://localhost:7531/";
 
@@ -298,7 +298,7 @@ const args = rest.length ? JSON.parse(rest.join(" ")) : {};
 
 try {
     const instance = await route(args);
-    const json = await request(instance.url, cmd.replace(/-/g, "_"), stripSelector(args), Math.max(10000, (Number(args.timeout_ms) || 45000) + 5000));
+    const json = await request(instance.url, cmd.replace(/-/g, "_"), stripSelector(args), commandTimeout(cmd, args));
     console.log(JSON.stringify(json, null, 2));
     process.exit(json.ok ? 0 : 2);
 } catch (e) {
