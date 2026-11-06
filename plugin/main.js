@@ -586,7 +586,7 @@ function readBody(ctx) {
     return s;
 }
 
-function writeResponse(ctx, status, obj) {
+function writeResponse(ctx, status, obj, command, startedAt) {
     try {
         var resp = ctx.Response;
         var body = JSON.stringify(obj);
@@ -600,7 +600,9 @@ function writeResponse(ctx, status, obj) {
         sw.Flush();
         sw.Close();
     } catch (e) {
-        plog("writeResponse failed (client gone?): " + e);
+        plog("writeResponse failed (client gone?): cmd=" + (command || "unknown")
+            + (startedAt ? " elapsed_ms=" + (Date.now() - startedAt) : "") + " error=" + e);
+        try { ctx.Response.Close(); } catch (closeError) { }
     }
 }
 
@@ -618,7 +620,14 @@ function pumpAccepts() {
         Bridge.pendingAccept = Bridge.listener.BeginGetContext(null, null);
     } catch (e) {
         Bridge.pendingAccept = null;
-        plog("re-arm failed, server down: " + e);
+        plog("re-arm failed, restarting server: " + e);
+        // Preserve the accepted request and existing jobs; rebuild the listener
+        // after this update rather than leaving a bound but unusable socket.
+        var failedListener = Bridge.listener;
+        Bridge.listener = null;
+        instanceUnregister();
+        try { failedListener.Close(); } catch (closeError) { }
+        Bridge.wantServer = true;
     }
     if (ctx == null) return;
     handleRequest(ctx);
@@ -644,11 +653,11 @@ function handleRequest(ctx) {
     }
     // Discovery must remain responsive while an asynchronous publish is active.
     if (msg.cmd === "ping" || msg.cmd === "project_info") {
-        try { writeResponse(ctx, 200, COMMANDS[msg.cmd](msg.args || {})); }
+        try { writeResponse(ctx, 200, COMMANDS[msg.cmd](msg.args || {}), msg.cmd, Date.now()); }
         catch (e) { writeResponse(ctx, 200, fail(msg.cmd + ": " + e)); }
         return;
     }
-    Bridge.queue.push({ ctx: ctx, cmd: String(msg.cmd), args: msg.args || {} });
+    Bridge.queue.push({ ctx: ctx, cmd: String(msg.cmd), args: msg.args || {}, receivedAt: Date.now() });
 }
 
 function stepQueue() {
@@ -658,7 +667,7 @@ function stepQueue() {
         var out = ASYNC_STEPPERS[job.cmd](job);
         if (out !== null && out !== undefined) {
             releasePublish(job, !job.done);
-            writeResponse(job.ctx, 200, out);
+            writeResponse(job.ctx, 200, out, job.cmd, job.receivedAt);
             Bridge.current = null;
         }
         return; // one async job at a time
@@ -667,7 +676,7 @@ function stepQueue() {
     if (next == null) return;
     var cmd = next.cmd;
     if (ASYNC_STARTERS[cmd]) {
-        var job = { ctx: next.ctx, cmd: cmd, args: next.args };
+        var job = { ctx: next.ctx, cmd: cmd, args: next.args, receivedAt: next.receivedAt };
         try {
             ASYNC_STARTERS[cmd](job);
             Bridge.current = job;
@@ -689,7 +698,7 @@ function stepQueue() {
         var stack = e && e.stack ? " | " + String(e.stack).split("\n").slice(0, 4).join(" <- ") : "";
         result = fail(cmd + ": " + (e && e.message ? e.message : e) + stack);
     }
-    writeResponse(next.ctx, 200, result);
+    writeResponse(next.ctx, 200, result, cmd, next.receivedAt);
 }
 
 function onUpdate() {
