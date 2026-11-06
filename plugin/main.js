@@ -135,14 +135,16 @@ function propValueIn(v) {
 var COMMANDS = {};
 
 COMMANDS.ping = function (a) {
-    return ok({
+    var result = {
         version: VERSION,
         editor: "FairyGUI",
         port: Bridge.port,
         projectPath: projectDirectory(),
         projectOpen: App.project != null,
         project: projectLabel()
-    });
+    };
+    try { result.runInBackground = !!CS.UnityEngine.Application.runInBackground; } catch (e) { }
+    return ok(result);
 };
 
 COMMANDS.project_info = function (a) {
@@ -570,6 +572,16 @@ function stepQueue() {
 
 function onUpdate() {
     if (Bridge.destroyed) return;
+    // Another editor component may reset the Unity player setting after boot.
+    try {
+        if (!CS.UnityEngine.Application.runInBackground) {
+            CS.UnityEngine.Application.runInBackground = true;
+            if (!Bridge.lastBackgroundWarning || Date.now() - Bridge.lastBackgroundWarning > 60000) {
+                Bridge.lastBackgroundWarning = Date.now();
+                plog("runInBackground had been reset; restored it");
+            }
+        }
+    } catch (e) { }
     // Start/restart the server here, never from the onProjectOpened callback
     // (see the startup model note in the header comment).
     if (Bridge.wantServer) {

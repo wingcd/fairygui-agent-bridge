@@ -155,14 +155,24 @@ if (cmd === "launch" || cmd === "ensure") {
 
     const alive = async () => {
         try { const instance = await route({project: a.project, port: a.port, bridge_url: a.bridge_url});
-            return {...await ping(instance.url), instance}; } catch { return null; }
+            return {...await ping(instance.url), instance}; } catch (e) {
+                if (e.code === 'BRIDGE_UNRESPONSIVE') throw e;
+                return null;
+            }
     };
 
     if (!a.project) {
         console.error(JSON.stringify({ok: false, error: 'args.project is required; ensure never reuses an unrelated editor'}));
         process.exit(4);
     }
-    const existing = await alive();
+    let existing;
+    try { existing = await alive(); }
+    catch (e) {
+        if (cmd !== 'launch' || e.code !== 'BRIDGE_UNRESPONSIVE') {
+            console.error(JSON.stringify({ok:false, error:String(e)}, null, 2));
+            process.exit(3);
+        }
+    }
     if (existing?.ok) {
         console.log(JSON.stringify({ ok: true, already: true, ping: existing }, null, 2));
         process.exit(0);
@@ -240,7 +250,9 @@ if (cmd === "launch" || cmd === "ensure") {
     const deadline = Date.now() + (a.timeout_ms || 180000);
     while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 3000));
-        const p = await alive();
+        let p;
+        try { p = await alive(); }
+        catch (e) { if (e.code !== 'BRIDGE_UNRESPONSIVE') throw e; }
         if (p?.ok) {
             console.log(JSON.stringify({ ok: true, launched: editor, waitedMs: Date.now() - (deadline - (a.timeout_ms || 180000)), ping: p }, null, 2));
             process.exit(0);

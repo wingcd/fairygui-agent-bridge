@@ -131,7 +131,32 @@ export async function route(selector = {}) {
     const explicit = selector.bridge_url || (selector.port !== undefined ? `http://localhost:${selector.port}/` : null);
     const instances = await discover({fallback: explicit || process.env.FGUI_BRIDGE_URL || undefined});
     // Explicit env preserves compatibility; project checks still apply.
-    return selectInstance(instances, {...selector, bridge_url: explicit || (!selector.project ? process.env.FGUI_BRIDGE_URL : undefined)});
+    try {
+        return selectInstance(instances, {...selector, bridge_url: explicit || (!selector.project ? process.env.FGUI_BRIDGE_URL : undefined)});
+    } catch (error) {
+        // Preserve the distinction between an absent registration and an
+        // editor which registered a queue but has stopped servicing it. Never
+        // send an operation to the latter merely because the file exists.
+        if (selector.project && !explicit && error.message.startsWith('Requested FairyGUI project is not online')) {
+            let files = [];
+            const dir = path.join(registryDir, 'instances');
+            try { files = fs.readdirSync(dir); } catch {}
+            for (const file of files) {
+                if (!/^queue-[a-f0-9]+\.json$/.test(file)) continue;
+                try {
+                    const e = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+                    const byPath = /[/\\]|\.fairy$/i.test(selector.project);
+                    const matches = byPath ? e.projectPath && normalizeProject(e.projectPath) === normalizeProject(selector.project) : e.project === selector.project;
+                    if (e.transport === 'file' && matches) {
+                        const unresponsive = new Error('FairyGUI project has a registered bridge but did not respond; restore the editor window and check it, or restart it if the registration is stale');
+                        unresponsive.code = 'BRIDGE_UNRESPONSIVE';
+                        throw unresponsive;
+                    }
+                } catch (e) { if (e.code === 'BRIDGE_UNRESPONSIVE') throw e; }
+            }
+        }
+        throw error;
+    }
 }
 export function stripSelector(args) {
     const {project, port, bridge_url, ...editorArgs} = args;

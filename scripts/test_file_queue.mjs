@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'fgui-queue-'));
 process.env.USERPROFILE = home;
 process.env.HOME = home;
-const {request, discover, selectInstance} = await import('../cli/instances.mjs');
+const {request, discover, selectInstance, route} = await import('../cli/instances.mjs');
 const callbacks = {onUpdate: new Set(), onProjectOpened: new Set(), onProjectClosed: new Set()};
 const App = {project: {name:'test', basePath:path.join(home,'project'), allPackages:{Count:0}},
     pluginManager: {basePath:path.join(home,'project','plugins')},
@@ -33,11 +33,15 @@ try {
     tick();
     const id=context.Bridge.instanceId; assert(id);
     const url=`fgui-file://${id}/`;
+    context.CS.UnityEngine.Application.runInBackground=false;
+    tick();
+    assert.equal(context.CS.UnityEngine.Application.runInBackground,true);
     const queue=path.join(home,'.fgui-agent-bridge','instances',`queue-${id}`);
     const oldResponse=path.join(queue,'responses',`${'c'.repeat(32)}.json`);
     const recentResponse=path.join(queue,'responses',`${'d'.repeat(32)}.json`);
     fs.writeFileSync(oldResponse,'{}'); fs.writeFileSync(recentResponse,'{}');
     const oldTime=new Date(Date.now()-700000); fs.utimesSync(oldResponse,oldTime,oldTime);
+    assert.equal((await request(url,'ping',{},1000)).data.runInBackground,true);
     let executions=0;
     context.COMMANDS.count = a => {executions++;return context.ok({value:a.value});};
     const replies=await Promise.all(Array.from({length:30},(_,i)=>request(url,'count',{value:i},5000)));
@@ -83,6 +87,8 @@ try {
     second.exports.onDestroy();
     clearInterval(timer); running=false;
     await assert.rejects(request(url,'count',{value:99},80),/timed out/);
+    await assert.rejects(route({project:App.project.basePath}), error =>
+        error.code === 'BRIDGE_UNRESPONSIVE' && /registered bridge/.test(error.message));
     tick(); assert.equal(executions,39);
     const staleId='b'.repeat(32);
     fs.writeFileSync(path.join(home,'.fgui-agent-bridge','instances',`queue-${id}`,'requests',`${staleId}.json`),
