@@ -1,8 +1,27 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {randomBytes} from 'node:crypto';
 
 export const registryDir = path.join(os.homedir(), '.fgui-agent-bridge');
+const lastCleanup = new Map();
+async function cleanupQueue(root) {
+    if (Date.now() - (lastCleanup.get(root) || 0) < 60000) return;
+    lastCleanup.set(root, Date.now());
+    for (const [dir, pattern] of [['requests', /\.(?:tmp|claimed)$/], ['responses', /\.(?:json|tmp)$/]]) {
+        const folder = path.join(root, dir);
+        let files;
+        try { files = await fs.promises.readdir(folder); } catch { continue; }
+        for (const name of files.sort().slice(0, 256)) {
+            if (!/^[a-f0-9]{32}\.json(?:\.tmp|\.claimed)?$/.test(name) || !pattern.test(name)) continue;
+            const file = path.join(folder, name);
+            try {
+                const stat = await fs.promises.lstat(file);
+                if (stat.isFile() && Date.now() - stat.mtimeMs > 600000) await fs.promises.unlink(file);
+            } catch {}
+        }
+    }
+}
 export function normalizeProject(value) {
     let p = path.resolve(String(value)).replace(/\\/g, '/').replace(/\/$/, '');
     if (/\.fairy$/i.test(p)) p = p.slice(0, p.lastIndexOf('/'));
@@ -10,10 +29,38 @@ export function normalizeProject(value) {
 }
 export async function request(url, cmd, args = {}, timeout = 5000) {
     const u = new URL(url);
+    if (u.protocol === 'fgui-file:') {
+        if (!/^[a-f0-9]{1,64}$/.test(u.hostname) || u.pathname !== '/' || u.search || u.hash)
+            throw new Error('Invalid bridge queue identifier');
+        const root = path.join(registryDir, 'instances', `queue-${u.hostname}`);
+        await cleanupQueue(root);
+        // Sortable timestamp preserves approximate arrival order across clients;
+        // 80 random bits keep names independent across processes.
+        const id = Date.now().toString(16).padStart(12, '0') + randomBytes(10).toString('hex');
+        const requestPath = path.join(root, 'requests', `${id}.json`);
+        const tempPath = `${requestPath}.tmp`;
+        const responsePath = path.join(root, 'responses', `${id}.json`);
+        const deadlineMs = Date.now() + timeout;
+        try {
+            await fs.promises.writeFile(tempPath, JSON.stringify({cmd, args, deadlineMs}), {flag:'wx'});
+            await fs.promises.rename(tempPath, requestPath);
+            while (Date.now() < deadlineMs) {
+                try {
+                    const response = JSON.parse(await fs.promises.readFile(responsePath, 'utf8'));
+                    if (response.status !== 200) throw new Error(`Bridge HTTP ${response.status}: ${response.result?.error || ''}`);
+                    return response.result;
+                } catch (e) { if (e.code !== 'ENOENT') throw e; }
+                await new Promise(resolve => setTimeout(resolve, 40));
+            }
+            throw new Error(`Bridge timed out after ${timeout} ms; a command already started may still complete`);
+        } finally {
+            await Promise.all([tempPath, requestPath, responsePath].map(p => fs.promises.unlink(p).catch(() => {})));
+        }
+    }
     if (!['http:', 'https:'].includes(u.protocol) || !['localhost', '127.0.0.1', '[::1]'].includes(u.hostname))
         throw new Error('Bridge URL must be localhost');
     const r = await fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({cmd, args}), signal: AbortSignal.timeout(timeout)});
+        body: JSON.stringify({cmd, args, deadlineMs: Date.now() + timeout}), signal: AbortSignal.timeout(timeout)});
     if (!r.ok) throw new Error(`Bridge HTTP ${r.status}`);
     return r.json();
 }
@@ -37,7 +84,7 @@ export async function discover({entries, fallback = process.env.FGUI_BRIDGE_URL 
             }
         } catch {}
     }
-    const urls = new Map(entries.map(e => [e.url || `http://localhost:${e.port}/`, e]));
+    const urls = new Map(entries.map(e => [e.transport === 'file' && /^[a-f0-9]{1,64}$/.test(e.id || '') ? `fgui-file://${e.id}/` : e.url || `http://localhost:${e.port}/`, e]));
     if (fallback && !urls.has(fallback)) urls.set(fallback, {});
     const results = await Promise.allSettled([...urls].map(async ([url, e]) => {
         const ping = await request(url, 'ping');
@@ -51,7 +98,7 @@ export async function discover({entries, fallback = process.env.FGUI_BRIDGE_URL 
             const base = packages.data?.[0]?.basePath?.replace(/\\/g, '/');
             if (base?.includes('/assets/')) projectPath = base.slice(0, base.lastIndexOf('/assets/'));
         }
-        return {url, port: ping.data.port || Number(new URL(url).port), pid: ping.data.pid || e.pid,
+        return {url, port: ping.data.port || (new URL(url).port ? Number(new URL(url).port) : undefined), pid: ping.data.pid || e.pid,
             project: info.data.name || ping.data.project || e.project,
             projectPath,
             packageNames: info.data.packageNames || []};
@@ -64,7 +111,10 @@ export function commandTimeout(cmd, args = {}) {
 }
 export function selectInstance(instances, selector = {}) {
     let candidates = instances;
-    if (selector.bridge_url) candidates = candidates.filter(i => new URL(i.url).origin === new URL(selector.bridge_url).origin);
+    if (selector.bridge_url) {
+        const identity = value => { const url = new URL(value); return url.protocol === 'fgui-file:' ? url.href : url.origin; };
+        candidates = candidates.filter(i => identity(i.url) === identity(selector.bridge_url));
+    }
     if (selector.port !== undefined) candidates = candidates.filter(i => i.port === Number(selector.port));
     if (selector.project) {
         const isPath = /[/\\]|\.fairy$/i.test(selector.project);

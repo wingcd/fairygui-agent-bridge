@@ -27,7 +27,7 @@ const S = String;
 
 const TOOLS = {
     discover_projects: {
-        description: 'List all online FairyGUI editor projects with absolute paths and ports. Each editor command accepts project, port, or bridge_url.',
+        description: 'List online FairyGUI editor projects and queue addresses. Each editor command accepts project or bridge_url; port targets legacy HTTP plugins.',
         inputSchema: obj({}),
     },
     ping: {
@@ -199,7 +199,7 @@ for (const [name, tool] of Object.entries(TOOLS)) {
     Object.assign(tool.inputSchema.properties, {
         project: {type: 'string', description: 'Target project absolute directory/.fairy path (recommended), or unique project name'},
         port: {type: 'integer', minimum: 1, maximum: 65535, description: 'Target editor bridge port'},
-        bridge_url: {type: 'string', description: 'Target localhost bridge URL'},
+        bridge_url: {type: 'string', description: 'Target discovered file queue URL or legacy localhost HTTP URL'},
     });
 }
 

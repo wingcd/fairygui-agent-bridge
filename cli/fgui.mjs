@@ -147,13 +147,7 @@ if (cmd === "launch" || cmd === "ensure") {
 
     const ping = async (url) => {
         try {
-            const r = await fetch(url, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ cmd: "ping" }),
-                signal: AbortSignal.timeout(3000),
-            });
-            return await r.json();
+            return await request(url, 'ping', {}, 3000);
         } catch {
             return null;
         }
@@ -264,7 +258,7 @@ if (!cmd || cmd === "-h" || cmd === "--help") {
     console.log(`fgui-agent-bridge CLI
 
 usage: fgui <command> ['{"json":"args"}']
-bridge: ${BASE}
+legacy HTTP fallback: ${BASE} (file queues discovered automatically)
 
 commands are forwarded verbatim to the editor plugin, e.g.:
   ping | project-info | list-packages | list-items | read-component
@@ -290,7 +284,7 @@ examples:
   fgui publish '{"pkg":"common","out_path":"C:/tmp/out"}'
 
 env:
-  FGUI_BRIDGE_URL  override bridge base url (default http://localhost:7531/)`);
+  FGUI_BRIDGE_URL  select a discovered queue URL or legacy localhost HTTP URL`);
     process.exit(cmd ? 0 : 1);
 }
 

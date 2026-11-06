@@ -35,7 +35,9 @@ try {
     assert.throws(() => selectInstance(instances, {project: '/games/missing'}), /not online/);
     assert.throws(() => selectInstance(instances, {project: '/games/a/ui', port: entries[1].port}), /not online/);
     await request(b.url, 'publish', stripSelector({project: '/games/b/ui', pkg: 'Common'}));
-    assert.deepEqual(observed.at(-1), {project: 'ui', cmd: 'publish', args: {pkg: 'Common'}});
+    const sent = observed.at(-1);
+    assert.deepEqual({project: sent.project, cmd: sent.cmd, args: sent.args}, {project: 'ui', cmd: 'publish', args: {pkg: 'Common'}});
+    assert(sent.deadlineMs > Date.now(), 'request carries a future deadline');
     assert.equal(normalizeProject('/games/a/ui/Game.fairy'), normalizeProject('/games/a/ui/'));
     await assert.rejects(request('http://example.com/', 'ping'), /localhost/);
     // Exercise the real stdio MCP process with an isolated registry.

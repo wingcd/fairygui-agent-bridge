@@ -1,32 +1,8 @@
-// FairyGUI Agent Bridge - editor-side plugin
-//
-// Runs a localhost HTTP JSON endpoint inside the FairyGUI editor so that AI
-// agents (via CLI or MCP) can drive the editor: create components, insert
-// objects, set properties, and publish packages - all through official
-// editor APIs (undo-aware) with byte-identical publish output.
-//
-// Threading model: strictly single-threaded. HttpListener.BeginGetContext
-// is polled per frame (IsCompleted), so every request is accepted, executed
-// and answered on the main Unity thread. No JS ever runs off-thread.
-//
-// Startup model: the HTTP server is started from the frame loop (onUpdate),
-// never from inside the onProjectOpened callback - during project open the
-// editor pumps the loading dialog's modal loop, and slow/blocking work done
-// in that callback re-enters PlayerLoop and deadlocks the spinner.
-//
-// IMPORTANT: never call System.Diagnostics.Process from this plugin. In this
-// stripped Unity editor build those queries corrupt native state (observed:
-// GetProcessById on a foreign pid deadlocks the main thread or crashes the
-// editor inside puerts). The plugin therefore registers itself as a plain
-// port-keyed JSON file and does NOT probe other instances; liveness of
-// registered instances is confirmed by the CLI/MCP side with HTTP pings.
-//
-// Endpoint: http://localhost:<port>/   (default 7531, override via port.txt
-// next to this file)
-// Protocol: POST with JSON body  {"cmd": "<command>", "args": {...}}
-// Response: JSON {"ok": true, "data": ...} or {"ok": false, "error": "..."}
+// FairyGUI Agent Bridge: per-editor local file queues, serviced on the editor
+// frame thread. No socket reads or writes run inside FairyGUI.
+// Never query System.Diagnostics.Process in the stripped editor runtime.
 
-var VERSION = "0.3.1";
+var VERSION = "0.4.0";
 
 var FairyGUI = CS.FairyGUI;
 var FairyEditor = CS.FairyEditor;
@@ -56,15 +32,6 @@ function plog(msg) {
             PluginDir + "/bridge.log",
             Bridge.logLines.join("\n"));
     } catch (e) { /* disk issues must never break the server */ }
-}
-
-function readPort() {
-    try {
-        var s = CS.System.IO.File.ReadAllText(PluginDir + "/port.txt").trim();
-        var p = parseInt(s, 10);
-        if (p > 0 && p < 65536) return p;
-    } catch (e) { }
-    return 7531;
 }
 
 // ---------------- helpers ----------------
@@ -489,182 +456,78 @@ function releasePublish(job, cancel) {
 var ASYNC_STARTERS = { publish: startPublish };
 var ASYNC_STEPPERS = { publish: stepPublish };
 
-// ---------------- instance registry (multi-project support) ----------------
-// Each running instance drops one small JSON file keyed by its own port;
-// the CLI/MCP side enumerates them and confirms liveness with an HTTP ping.
-// The plugin never reads or probes other instances (see the Process API
-// warning in the header) and never writes shared files, so concurrent
-// editor startups cannot clobber each other's registrations.
-
+// ---------------- file queue transport ----------------
+// Each editor owns a private queue. Clients publish complete requests by atomic
+// rename; this frame loop claims each file before executing it. No socket I/O is
+// performed on the editor thread.
 var InstancesDir = (function () {
-    try {
-        return CS.System.Environment.GetFolderPath(CS.System.Environment.SpecialFolder.UserProfile)
-            + "/.fgui-agent-bridge/instances";
-    } catch (e) { return null; }
+    try { return CS.System.Environment.GetFolderPath(CS.System.Environment.SpecialFolder.UserProfile) + "/.fgui-agent-bridge/instances"; }
+    catch (e) { return null; }
 })();
-
-function instanceFilePath(port) {
-    // port comes from our own bound listener, digits only - no separators
-    return InstancesDir + "/" + port + ".json";
-}
-
-function instanceRegister(port) {
-    if (InstancesDir == null) return;
-    try {
-        CS.System.IO.Directory.CreateDirectory(InstancesDir);
-        CS.System.IO.File.WriteAllText(instanceFilePath(port), JSON.stringify({
-            port: port,
-            project: projectLabel(),
-            projectPath: projectDirectory(),
-            startedAt: new Date().toISOString()
-        }));
-    } catch (e) { plog("instance registration failed: " + e); }
-}
-
-function instanceUnregister() {
-    if (InstancesDir == null || Bridge.port === undefined) return;
-    try {
-        var file = instanceFilePath(Bridge.port);
-        if (CS.System.IO.File.Exists(file)) CS.System.IO.File.Delete(file);
-    } catch (e) { }
-}
-
 function projectDirectory() {
-    // The plugin is installed at <project>/plugins/agent-bridge.
-    // Avoid additional native Path overloads in the stripped Unity editor build.
+    try { if (App.project && App.project.basePath) return String(App.project.basePath).replace(/\\/g, '/').replace(/\/$/, ''); } catch (e) { }
     return String(PluginDir).replace(/\\/g, '/').replace(/\/$/, '').split('/').slice(0, -2).join('/');
 }
-
-function projectLabel() {
-    try {
-        if (App.project != null) {
-            var n = App.project.name;
-            if (n) return String(n);
-        }
-    } catch (e) { }
-    return "";
-}
-
-// ---------------- HTTP plumbing (main thread only) ----------------
-
+function projectLabel() { try { return App.project && App.project.name ? String(App.project.name) : ""; } catch (e) { return ""; } }
 function startServer() {
-    if (Bridge.destroyed || Bridge.listener != null) return false;
-    var wanted = readPort();
-    var maxTries = 21; // e.g. 7531..7551
-    for (var port = wanted; port < wanted + maxTries; port++) {
-        var listener = null;
-        try {
-            listener = new CS.System.Net.HttpListener();
-            listener.Prefixes.Add("http://localhost:" + port + "/");
-            listener.Start();
-            var pendingAccept = listener.BeginGetContext(null, null);
-            Bridge.listener = listener;
-            Bridge.port = port;
-            Bridge.pendingAccept = pendingAccept;
-            instanceRegister(port);
-            plog("listening on http://localhost:" + port + "/ v" + VERSION
-                + (port !== wanted ? " (default port busy, auto-picked)" : ""));
-            return true;
-        } catch (e) {
-            try { if (listener != null) listener.Close(); } catch (closeError) { }
-            // port busy or listener error - try the next port
-        }
-    }
-    plog("FAILED to start http listener on ports " + wanted + ".." + (wanted + maxTries - 1));
-    return false;
+    if (Bridge.destroyed || Bridge.instanceId) return false;
+    if (!InstancesDir || !projectDirectory()) throw new Error("cannot determine project or registry path");
+    var id = Date.now().toString(16) + Math.floor(Math.random() * 0x100000000).toString(16) + Math.floor(Math.random() * 0x100000000).toString(16);
+    var root = InstancesDir + "/queue-" + id;
+    CS.System.IO.Directory.CreateDirectory(root + "/requests");
+    CS.System.IO.Directory.CreateDirectory(root + "/responses");
+    PluginDir = projectDirectory() + "/plugins/agent-bridge";
+    var tmp = InstancesDir + "/queue-" + id + ".tmp";
+    CS.System.IO.File.WriteAllText(tmp, JSON.stringify({transport:"file", id:id, project:projectLabel(), projectPath:projectDirectory()}));
+    CS.System.IO.File.Move(tmp, InstancesDir + "/queue-" + id + ".json");
+    Bridge.instanceId = id;
+    Bridge.queueRoot = root;
+    plog("file queue started: " + id + " project=" + projectDirectory());
+    return true;
 }
-
-function readBody(ctx) {
-    var req = ctx.Request;
-    if (req.ContentLength64 <= 0) return "";
-    var ms = new CS.System.IO.MemoryStream();
-    req.InputStream.CopyTo(ms);
-    ms.Position = 0;
-    var sr = new CS.System.IO.StreamReader(ms);
-    var s = sr.ReadToEnd();
-    sr.Close();
-    return s;
-}
-
-function writeResponse(ctx, status, obj, command, startedAt) {
+function writeResponse(ctx, status, obj) {
+    if (!ctx || !ctx.id || !Bridge.queueRoot) return;
     try {
-        var resp = ctx.Response;
-        var body = JSON.stringify(obj);
-        resp.StatusCode = status;
-        resp.ContentType = "application/json; charset=utf-8";
-        resp.Headers.Set("Access-Control-Allow-Origin", "*");
-        // no ContentLength64 => chunked; avoids Encoding.GetBytes whose
-        // string overload is stripped in the editor's Unity runtime
-        var sw = new CS.System.IO.StreamWriter(resp.OutputStream);
-        sw.Write(body);
-        sw.Flush();
-        sw.Close();
-    } catch (e) {
-        plog("writeResponse failed (client gone?): cmd=" + (command || "unknown")
-            + (startedAt ? " elapsed_ms=" + (Date.now() - startedAt) : "") + " error=" + e);
-        try { ctx.Response.Close(); } catch (closeError) { }
-    }
+        var target = Bridge.queueRoot + "/responses/" + ctx.id + ".json";
+        var temp = target + ".tmp";
+        CS.System.IO.File.WriteAllText(temp, JSON.stringify({status:status, result:obj}));
+        CS.System.IO.File.Move(temp, target);
+    } catch (e) { plog("file response failed: " + e); }
 }
-
 function pumpAccepts() {
-    if (Bridge.pendingAccept == null) return;
-    if (!Bridge.pendingAccept.IsCompleted) return;
-    var ctx = null;
-    try {
-        ctx = Bridge.listener.EndGetContext(Bridge.pendingAccept);
-    } catch (e) {
-        plog("EndGetContext error: " + e);
+    var dir = Bridge.queueRoot + "/requests";
+    var files = CS.System.IO.Directory.GetFiles(dir, "*.json");
+    var paths = [];
+    for (var n = 0; n < files.Length; n++) paths.push(String(files.GetValue(n)));
+    paths.sort();
+    // Bound work per frame; atomic rename from the client means files are complete.
+    for (var i = 0; i < paths.length && i < 8; i++) {
+        var file = paths[i];
+        var match = file.replace(/\\/g, '/').match(/\/([a-f0-9]{32})\.json$/);
+        if (!match) continue;
+        var claimed = file + ".claimed";
+        try { CS.System.IO.File.Move(file, claimed); } catch (e) { continue; }
+        try {
+            var msg = JSON.parse(CS.System.IO.File.ReadAllText(claimed));
+            if (!msg || !msg.cmd || typeof msg.deadlineMs !== "number" || Date.now() >= msg.deadlineMs) continue;
+            var ctx = {id:match[1]};
+            if (msg.cmd === "ping" || msg.cmd === "project_info") {
+                try { writeResponse(ctx, 200, COMMANDS[msg.cmd](msg.args || {})); }
+                catch (e) { writeResponse(ctx, 200, fail(msg.cmd + ": " + e)); }
+            } else {
+                Bridge.queue.push({ctx:ctx, cmd:String(msg.cmd), args:msg.args || {}, receivedAt:Date.now(), deadlineMs:msg.deadlineMs});
+            }
+        } catch (e) { plog("invalid queue request: " + e); }
+        finally { try { CS.System.IO.File.Delete(claimed); } catch (e) {} }
     }
-    // immediately re-arm for the next request
-    try {
-        Bridge.pendingAccept = Bridge.listener.BeginGetContext(null, null);
-    } catch (e) {
-        Bridge.pendingAccept = null;
-        plog("re-arm failed, restarting server: " + e);
-        // Preserve the accepted request and existing jobs; rebuild the listener
-        // after this update rather than leaving a bound but unusable socket.
-        var failedListener = Bridge.listener;
-        Bridge.listener = null;
-        instanceUnregister();
-        try { failedListener.Close(); } catch (closeError) { }
-        Bridge.wantServer = true;
-    }
-    if (ctx == null) return;
-    handleRequest(ctx);
 }
-
-function handleRequest(ctx) {
-    var req = ctx.Request;
-    // simple CORS preflight support for browser consoles
-    if (req.HttpMethod === "OPTIONS") {
-        ctx.Response.Headers.Set("Access-Control-Allow-Origin", "*");
-        ctx.Response.Headers.Set("Access-Control-Allow-Methods", "POST, OPTIONS");
-        ctx.Response.Headers.Set("Access-Control-Allow-Headers", "Content-Type");
-        writeResponse(ctx, 200, ok({ cors: true }));
-        return;
-    }
-    var body = "";
-    try { body = readBody(ctx); } catch (e) { writeResponse(ctx, 400, fail("bad body: " + e)); return; }
-    var msg = null;
-    try { msg = body ? JSON.parse(body) : {}; } catch (e) { }
-    if (!msg || !msg.cmd) {
-        writeResponse(ctx, 400, fail("body must be JSON like {\"cmd\":..., \"args\":{...}}"));
-        return;
-    }
-    // Discovery must remain responsive while an asynchronous publish is active.
-    if (msg.cmd === "ping" || msg.cmd === "project_info") {
-        try { writeResponse(ctx, 200, COMMANDS[msg.cmd](msg.args || {}), msg.cmd, Date.now()); }
-        catch (e) { writeResponse(ctx, 200, fail(msg.cmd + ": " + e)); }
-        return;
-    }
-    Bridge.queue.push({ ctx: ctx, cmd: String(msg.cmd), args: msg.args || {}, receivedAt: Date.now() });
-}
-
 function stepQueue() {
     // finish the running async job first
     if (Bridge.current != null) {
         var job = Bridge.current;
-        var out = ASYNC_STEPPERS[job.cmd](job);
+        var out;
+        try { out = ASYNC_STEPPERS[job.cmd](job); }
+        catch (e) { out = fail(job.cmd + ": " + e); }
         if (out !== null && out !== undefined) {
             releasePublish(job, !job.done);
             writeResponse(job.ctx, 200, out, job.cmd, job.receivedAt);
@@ -674,6 +537,10 @@ function stepQueue() {
     }
     var next = Bridge.queue.shift();
     if (next == null) return;
+    if (typeof next.deadlineMs === 'number' && isFinite(next.deadlineMs) && Date.now() >= next.deadlineMs) {
+        // Expired before execution: never apply a stale command.
+        return;
+    }
     var cmd = next.cmd;
     if (ASYNC_STARTERS[cmd]) {
         var job = { ctx: next.ctx, cmd: cmd, args: next.args, receivedAt: next.receivedAt };
@@ -709,13 +576,14 @@ function onUpdate() {
         Bridge.wantServer = false;
         try { startServer(); } catch (e) { plog("startServer failed: " + e); }
     }
-    if (Bridge.listener == null) return;
-    pumpAccepts();
-    stepQueue();
+    if (!Bridge.instanceId) return;
+    try { pumpAccepts(); } catch (e) { plog("queue poll failed: " + e); }
+    try { stepQueue(); } catch (e) { plog("queue execution failed: " + e); }
+
 }
 
 function boot() {
-    // keep the frame loop (and thus the HTTP pump) running when the editor
+    // keep the frame loop (and thus the queue pump) running when the editor
     // window loses focus or is minimized - without this Unity pauses
     try { CS.UnityEngine.Application.runInBackground = true; } catch (e) {
         plog("runInBackground not settable: " + e);
@@ -728,7 +596,7 @@ function boot() {
     try {
         var toolMenu = App.menu.GetSubMenu("tool");
         Bridge.toolMenu = toolMenu;
-        toolMenu.AddItem("Agent bridge: restart server", "agentbridge_restart", function () {
+        toolMenu.AddItem("Agent bridge: restart queue", "agentbridge_restart", function () {
             if (Bridge.current != null) {
                 plog('restart deferred: a command is still running');
                 return;
@@ -762,12 +630,12 @@ function stopServer() {
     for (var i = 0; i < queued.length; i++) {
         writeResponse(queued[i].ctx, 503, fail("project closed or bridge stopped"));
     }
-    instanceUnregister();
-    var listener = Bridge.listener;
-    Bridge.listener = null;
-    Bridge.pendingAccept = null;
+    if (Bridge.instanceId && InstancesDir) {
+        try { CS.System.IO.File.Delete(InstancesDir + "/queue-" + Bridge.instanceId + ".json"); } catch (e) { }
+    }
+    Bridge.instanceId = null;
+    Bridge.queueRoot = null;
     Bridge.port = undefined;
-    try { if (listener != null) listener.Close(); } catch (e) { }
 }
 
 function onDestroy() {

@@ -2,7 +2,7 @@
 
 **English summary:** A FairyGUI editor plugin + CLI + MCP server that lets AI agents build and publish FairyGUI UI through official editor APIs. Works with the **free** editor — including publishing (verified: output is byte-identical to clicking Publish in the GUI).
 
-让 AI（Claude / Cursor / ZCode / 任何 MCP 客户端，或裸 CLI / curl）直接操作 FairyGUI 编辑器制作 UI：
+让 AI（Claude / Cursor / ZCode / 任何 MCP 客户端，或 CLI）直接操作 FairyGUI 编辑器制作 UI：
 
 - **创建组件**、插入/删除舞台元件、改属性（走官方编辑器 API，支持撤销）
 - **发布 UI 包**（产出与编辑器手动发布**逐字节一致**，实测 md5 相同）
@@ -14,8 +14,8 @@ FairyGUI 编辑器官方没有 MCP/对外 CLI（命令行 batchmode 发布是付
 
 ```
 AI agent ──MCP(stdio)──┐
-AI agent ──CLI─────────┼──► HTTP (localhost:7531) ──► FairyGUI 编辑器插件（官方 API）
-你本人 ───curl─────────┘                                   │
+AI agent ──CLI─────────┼──► 本地文件队列 ──► FairyGUI 编辑器插件（官方 API）
+你本人 ───CLI──────────┘                                   │
                                                            ▼
                                               组件 XML / .bin / 图集（官方发布产物）
 ```
@@ -24,7 +24,7 @@ AI agent ──CLI─────────┼──► HTTP (localhost:7531) 
 
 | 层 | 位置 | 说明 |
 |---|---|---|
-| 编辑器插件 | `plugin/` | 装进 UI 工程的 `plugins/agent-bridge/`，在编辑器内起 localhost HTTP 服务，单线程帧驱动（不跨线程调 Unity API） |
+| 编辑器插件 | `plugin/` | 装进 UI 工程的 `plugins/agent-bridge/`，通过本地文件队列通信，编辑器单线程帧驱动（不跨线程调 Unity API） |
 | CLI | `cli/fgui.mjs` | 零依赖 Node 18+，`node cli/fgui.mjs <cmd> '<json>'` |
 | MCP server | `mcp/server.mjs` | 零依赖 stdio MCP，每个命令注册为一个 tool |
 
@@ -40,10 +40,10 @@ scripts/install.sh  /d/work/my-ui-project     # macOS / Linux
 # 2. 用编辑器打开该工程（插件随工程加载，日志见 plugins/agent-bridge/bridge.log）
 
 # 3. 验证
-curl -X POST http://localhost:7531/ -d "{\"cmd\":\"ping\"}"
+node cli/fgui.mjs ping
 ```
 
-**插件升级（推荐）**：编辑器按工程加载插件（没有全局插件目录），所以本仓库提供一条命令把 `plugin/` 铺到所有受管工程——工程清单存放在**用户目录** `~/.fgui-agent-bridge/projects.json`（不进 git，每人各自维护）：
+**插件升级（推荐）**：本仓库提供一条命令把 `plugin/` 铺到所有受管工程——工程清单存放在**用户目录** `~/.fgui-agent-bridge/projects.json`（不进 git，每人各自维护）。Windows 环境中还可能存在 `%APPDATA%/FairyGUI-Editor/plugins/agent-bridge`；排查重复加载时须同时核对全局和工程目录，迁移前保留备份，不要静默删除：
 
 ```bash
 node cli/fgui.mjs sync-plugins '{"add":"D:/work/my-ui-project"}'   # 纳管一个工程
@@ -60,19 +60,11 @@ node cli/fgui.mjs ensure '{"project":"D:/work/my-ui-project"}'
 - `ensure`：桥不通就自动启动编辑器（加载 `.fairy` 工程）并轮询到 ping 就绪后返回；已在运行则直接返回
 - `launch`：只启动不等就绪
 
-**关于「无端/headless」**：编辑器命令行 `batchmode` 是**专业版**功能（免费版实测被 `CheckProLicense` 拦截），插件也必须活在编辑器进程里，因此完全无窗口在免费版做不到。替代方案：插件已设置 `Application.runInBackground=true`，编辑器**最小化/失焦也能正常服务**，接近无感运行。
+**关于「无端/headless」**：编辑器命令行 `batchmode` 是**专业版**功能（免费版实测被 `CheckProLicense` 拦截），插件也必须活在编辑器进程里，因此完全无窗口在免费版做不到。插件尝试设置 `Application.runInBackground=true`；这不能保证最小化后仍可响应，实际使用应以 `ping` 验证，遇到最小化后超时先恢复窗口排查。
 
-端口默认 7531，改端口：在 `plugins/agent-bridge/` 下放一个 `port.txt`（内容如 `7900`），重启工程生效。
+每个编辑器实例使用独立的本地文件队列，不再监听 HTTP 端口。CLI 和 MCP 自动发现实例；旧版 HTTP 插件仍可通过 `bridge_url` 或 `port` 访问。升级工程插件后请重新打开工程，并重启 MCP 客户端。
 
-## 三种用法
-
-**curl（任何语言 3 行代码对接）：**
-
-```bash
-curl -X POST http://localhost:7531/ -d "{\"cmd\":\"list_packages\"}"
-curl -X POST http://localhost:7531/ -d "{\"cmd\":\"create_component\",\"args\":{\"pkg\":\"common\",\"name\":\"Demo\",\"width\":400,\"height\":300}}"
-curl -X POST http://localhost:7531/ -d "{\"cmd\":\"publish\",\"args\":{\"pkg\":\"common\",\"out_path\":\"C:/tmp/out\"}}"
-```
+## 使用方式
 
 **CLI：**
 
@@ -101,7 +93,7 @@ AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件
 
 ## 命令参考
 
-请求：`POST http://localhost:7531/`，body `{"cmd":"<命令>","args":{...}}`；响应 `{"ok":true,"data":...}` 或 `{"ok":false,"error":"..."}`。
+通过 CLI 或 MCP 发送命令；响应 `{"ok":true,"data":...}` 或 `{"ok":false,"error":"..."}`。
 
 | 命令 | 参数 | 说明 |
 |---|---|---|
@@ -126,21 +118,19 @@ AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件
 
 属性名与编辑器属性面板/XML 属性一致（`xy`/`size`/`title`/`text`/`icon`/`fontSize`/`visible`/`pivot`/`anchor`…），向量值用 `"x,y"` 字符串形式。参考：编辑器插件 API 的权威定义见官方仓库 [fairygui/FairyGUI-Editor](https://github.com/fairygui/FairyGUI-Editor) 的 `plugin/TsAPI/editor.d.ts`（许可证未标明，故本仓库不复制该文件）。
 
-**本地命令（不经编辑器）**：`lint`——`node cli/fgui.mjs lint '{"project":"<工程根>"}'`（MCP 同名工具），跑 `scripts/lint_components.mjs` 的 27 项 STANDARDS 检查：✗ 阻断（引用悬空含 icon/titleIcon/sound/font、缺 exported、死登记、发明标签、包 id 位数、九宫格越界/压角…）退出码 1；⚠ 提醒（命名、单件转发层、磁盘孤儿、单选未关联 controller、全屏贴底漏绑、文本 autoSize 未声明/非法值/静态现溢出…）不阻断；工程根或 export/ 下发现 `strings.xml` + `strings_语种.xml` 时自动对账翻译表（键覆盖/`{{模板}}`与 UBB 修饰一致/未翻，检查 25~27，STANDARDS §7，也可独立跑 `node scripts/lint_strings.mjs 源.xml 译文.xml…`）。上表 HTTP 命令不含 lint——它是磁盘审计，不需要编辑器在线。
+**本地命令（不经编辑器）**：`lint`——`node cli/fgui.mjs lint '{"project":"<工程根>"}'`（MCP 同名工具），跑 `scripts/lint_components.mjs` 的 27 项 STANDARDS 检查：✗ 阻断（引用悬空含 icon/titleIcon/sound/font、缺 exported、死登记、发明标签、包 id 位数、九宫格越界/压角…）退出码 1；⚠ 提醒（命名、单件转发层、磁盘孤儿、单选未关联 controller、全屏贴底漏绑、文本 autoSize 未声明/非法值/静态现溢出…）不阻断；工程根或 export/ 下发现 `strings.xml` + `strings_语种.xml` 时自动对账翻译表（键覆盖/`{{模板}}`与 UBB 修饰一致/未翻，检查 25~27，STANDARDS §7，也可独立跑 `node scripts/lint_strings.mjs 源.xml 译文.xml…`）。上表编辑器命令不含 lint——它是磁盘审计，不需要编辑器在线。
 
 ## 同时编辑多个项目（多编辑器实例）
 
 FairyGUI 一个编辑器实例只开一个工程；开多个编辑器窗口编辑多个工程时，本桥**自动区分**：
 
-- 端口冲突自动递增：第一个实例占 7531，第二个自动用 7532，依此类推（可在各工程 `plugins/agent-bridge/port.txt` 固定指定）
-- 每个实例绑定端口后把 `{port, project, projectPath}` 写到独立的 `~/.fgui-agent-bridge/instances/<port>.json`，退出自动注销；插件**只写自己的文件、不探测其他实例**，多窗口同时启动互不覆盖
-- `ping` / `project_info` 返回本实例端口与工程名，一眼核对连的是谁
-- CLI：`node cli/fgui.mjs discover` 列出所有在线实例及其工程、端口，并顺手清理 ping 不通的陈旧注册文件（超过 30 秒的才清，避免误删刚启动的实例）
-- 指定实例：CLI/MCP 设 `FGUI_BRIDGE_URL=http://localhost:7532/`
+- 每个实例注册独立随机 ID 和工程路径，拥有自己的请求、响应目录；CLI 并发请求使用独立 ID，编辑器串行执行。
+- `node cli/fgui.mjs discover` 列出可响应的实例。使用绝对工程路径选择目标，多个同路径实例会返回歧义错误。
+- 客户端超时后尚未执行的请求会被丢弃；已经开始执行的操作可能仍会完成，避免盲目重试写操作。
 
 ### 按请求选择工程（多项目推荐）
 
-MCP 新增 `discover_projects`，返回每个在线窗口的工程绝对路径、端口和包名。所有编辑器工具都接受 `project`、`port` 或 `bridge_url`，无需修改 MCP 配置或重连即可操作不同窗口：
+MCP 新增 `discover_projects`，返回每个在线窗口的工程绝对路径、队列地址和包名。所有编辑器工具都接受 `project` 或 `bridge_url`（`port` 仅兼容旧 HTTP 插件），无需修改 MCP 配置或重连即可操作不同窗口：
 
 ```text
 discover_projects {}
@@ -152,9 +142,9 @@ CLI 同样支持：`node cli/fgui.mjs publish '{"project":"H:/games/Storm/fairyg
 
 `ensure` / `launch` 会先核对目标工程，已有其他工程不能算目标已打开；新进程就绪后也只匹配目标。MCP 工具列表更新后需要重新连接一次客户端。明确需要交互窗口时传 `visible:true`；否则启动器隐藏窗口。
 
-**v0.3.0 硬性约束（曾有真实事故）**：裁剪版 Unity 编辑器里 `System.Diagnostics.Process` 查询会在启动登记阶段破坏原生状态——实测表现为**编辑器打开工程时永久转圈**（PlayerLoop 递归 + D3D11 呈死锁）或 puerts 内原生崩溃。因此插件**完全不碰**该 API：注册文件按端口键、不跨实例探测、不带 pid；存活状态一律由 CLI/MCP 侧 HTTP 心跳确认，陈旧注册由 `discover` 清理。同理，HTTP 服务**只在帧循环（onUpdate）里启动**，绝不在 `onProjectOpened` 回调里做——工程打开期间回调跑在加载对话框的模态循环里，在那里做慢操作会重入 PlayerLoop 把转圈卡死。”restart server” 也是回到帧循环再绑定，先关旧监听器避免占位。
+**编辑器约束**：插件不调用 `System.Diagnostics.Process`，以避免部分裁剪版编辑器发生原生崩溃；队列在帧循环中启动，避免工程打开回调重入。
 
-回归检查：`node scripts/test_instances.mjs`。真实多窗口编辑和发布还需以编辑器在线结果验收；编辑器自身启动崩溃与 HTTP 路由是不同问题。
+回归检查：`node scripts/test_file_queue.mjs` 和 `node scripts/test_instances.mjs`。
 
 ## 设计分辨率缩放导出（1080×1920 → 750×1334 之类）
 
@@ -186,10 +176,10 @@ node cli/fgui.mjs publish '{"pkg":"common"}'
 - `insert_object`：跨包引用插入舞台子对象（`n0`），`list_children` 可见
 - `publish`：`PublishHandler` 发布成功（小包 ~165ms），产物与 GUI 手动发布 **md5 逐字节一致**；无专业版拦截
 - `delete_item`：删除测试组件，工程 git 状态还原干净
-- `discover`：多实例注册表（`~/.fgui-agent-bridge/registry.json`）列出端口/pid/工程名
+- `discover`：多实例注册表列出在线队列和工程名
 - 命令行 `batchmode` 发布会被 `CheckProLicense` 挡（专业版功能）——本桥不经过 batchmode，不受影响
 
-开发中踩过的坑（对二次开发有用）：编辑器 Unity 运行时裁掉了 `Encoding.UTF8.GetBytes(string)` 重载（用 `StreamWriter` 替代）；窗口最小化会暂停主循环（插件设 `runInBackground` 解决）；包对象懒加载（`getPkg` 统一 `EnsureOpen`）；`CreateComponentItem` 的 `path`/`extentionId` 未用时必须传 `null` 而非 `""`。
+开发中踩过的坑（对二次开发有用）：编辑器 Unity 运行时裁掉了 `Encoding.UTF8.GetBytes(string)` 重载（用 `StreamWriter` 替代）；窗口最小化可能暂停请求处理（`runInBackground` 不能保证解决）；包对象懒加载（`getPkg` 统一 `EnsureOpen`）；`CreateComponentItem` 的 `path`/`extentionId` 未用时必须传 `null` 而非 `""`。
 
 v0.1.1 追加（2026-10 实测）：
 
@@ -198,7 +188,7 @@ v0.1.1 追加（2026-10 实测）：
 - **`launch`/`ensure` 新增 `args.args` 透传**：如 `{"project":"...","args":["-screen-width","1440","-screen-height","960"]}`；编辑器窗口尺寸 Unity 每帧自管，外部 `SetWindowPos` 无效，窗口畸形只能带参数重启解决。
 - **手写 XML 的 8 位色坑**：`#RRGGBBAA` 运行时可能只取后 6 位（`#000000c8`→纯蓝 `(0,0,200)`），组件里用 6 位色 + `alpha="0.x"` 属性组合。
 
-限制：编辑器需保持运行（可最小化）；仅监听 localhost，无鉴权（不要端口转发到公网）；一次执行一个命令（串行队列，AI 工作流够用）。
+限制：编辑器需保持运行（可最小化）；本地用户可以访问队列文件；每个编辑器一次执行一个命令（串行队列）。
 
 ## 状态
 

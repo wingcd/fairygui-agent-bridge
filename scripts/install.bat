@@ -19,5 +19,5 @@ copy /y "%SRC%\package.json" "%DST%\" >nul
 copy /y "%SRC%\main.js" "%DST%\" >nul
 echo installed to %DST%
 echo open (or restart) the project in FairyGUI editor, then:
-echo   curl -X POST http://localhost:7531/ -d "{\"cmd\":\"ping\"}"
+echo   node cli/fgui.mjs ping
 endlocal
