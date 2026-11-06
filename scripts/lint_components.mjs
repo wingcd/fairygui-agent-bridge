@@ -181,6 +181,21 @@ for (const pkgDir of fs.readdirSync(assetsDir)) {
 // "component 引用是不是单选实例"必须反查目标皮肤件（跨包引用一并覆盖）。
 const walkXml = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
   d.isDirectory() ? walkXml(path.join(dir, d.name)) : d.name.endsWith('.xml') ? [path.join(dir, d.name)] : []);
+
+// 编辑器读取对象坐标和尺寸时使用 Int32.Parse；扫描整个 assets，包含 windows 等非 components 目录。
+for (const file of walkXml(assetsDir)) {
+  const src = fs.readFileSync(file, 'utf8');
+  for (const tag of src.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g)) {
+    if (!OBJ_TAGS.has(tag[1])) continue;
+    for (const attr of tag[2].matchAll(/\s(xy|size)\s*=\s*(["'])(.*?)\2/g)) {
+      const parts = attr[3].split(',');
+      if (parts.length === 2 && parts.every(v => /^[+-]?\d+$/.test(v) && Number(v) >= -2147483648 && Number(v) <= 2147483647)) continue;
+      const line = src.slice(0, tag.index).split('\n').length;
+      console.log(`✗ ${path.relative(root, file)}:${line} ${tag[1]} ${attr[1]}="${attr[3]}" 必须是两个 Int32 整数，否则编辑器可能无法打开`);
+      problems++;
+    }
+  }
+}
 // 全文件遍历（跳隐藏文件/目录）——磁盘孤儿对账用（§2.15 形态③）
 const walkFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
   d.name.startsWith('.') ? [] : d.isDirectory() ? walkFiles(path.join(dir, d.name)) : [path.join(dir, d.name)]);
