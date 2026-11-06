@@ -34,6 +34,18 @@ const TOOLS = {
         description: "Check the bridge and editor status. Start here.",
         inputSchema: obj({}),
     },
+    acquire_lock: {
+        description: "Acquire a project-wide or component lease. Project locks exclude all other locks and publish; component locks exclude the same component and publish. Release when finished.",
+        inputSchema: obj({ scope: {type:'string', enum:['project','component']}, pkg:{type:'string'}, name:{type:'string'}, owner:{type:'string'}, lease_ms:{type:'number', minimum:1000, maximum:3600000} }, ['scope']),
+    },
+    release_lock: {
+        description: "Release a lease using its lock_token.",
+        inputSchema: obj({lock_token:{type:'string'}}, ['lock_token']),
+    },
+    operation_status: {
+        description: "Get the active bridge operation, publishing state, and queued operations without waiting for publish. Includes active leases; acquire_lock provides mutual exclusion.",
+        inputSchema: obj({}),
+    },
     project_info: {
         description: "Get the currently open FairyGUI project (name, packages).",
         inputSchema: obj({}),
@@ -197,6 +209,7 @@ const TOOLS = {
 for (const [name, tool] of Object.entries(TOOLS)) {
     if (name === 'discover_projects' || name === 'lint') continue;
     Object.assign(tool.inputSchema.properties, {
+        lock_token: {type: 'string', description: 'Lease token for protected operations'},
         project: {type: 'string', description: 'Target project absolute directory/.fairy path (recommended), or unique project name'},
         port: {type: 'integer', minimum: 1, maximum: 65535, description: 'Target editor bridge port'},
         bridge_url: {type: 'string', description: 'Target discovered file queue URL or legacy localhost HTTP URL'},

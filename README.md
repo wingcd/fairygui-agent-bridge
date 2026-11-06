@@ -100,6 +100,7 @@ AI 的典型制作循环：`list_items` 找素材 → `read_component` 读组件
 | `ping` | — | 存活/版本检查 |
 | `project_info` | — | 当前工程信息 |
 | `list_packages` | — | 包列表（id/name/basePath） |
+| `operation_status` | 无 | 查询桥接队列当前操作、是否发布中及排队操作；可在发布期间调用 |
 | `list_items` | `pkg`, `depth?` | 包内资源树（组件/图片/字体，id、路径、尺寸） |
 | `export_strings` | `file?` | 导出多语言字符串 XML（官方 ExportStringsHandler，TranslationHelper 格式；`file` 缺省为工程根 strings.xml） |
 | `import_strings` | `file` | 导入字符串 XML 到工程组件（官方 ImportStringsHandler，文本直接写入组件 XML 并保存；用于编辑器内预览译文，检查完导入原语言 XML 还原） |
@@ -140,7 +141,7 @@ read_component {"project":"H:/games/Other/fairygui","pkg":"Common","name":"Butto
 
 CLI 同样支持：`node cli/fgui.mjs publish '{"project":"H:/games/Storm/fairygui","pkg":"StormRacing"}'`。`project` 可以是目录、`.fairy` 文件或唯一工程名；同名工程必须用绝对路径区分。多个窗口在线却未指定目标时，返回明确错误，不会随便操作第一个窗口。环境变量仍兼容。
 
-`ensure` / `launch` 会先核对目标工程，已有其他工程不能算目标已打开；新进程就绪后也只匹配目标。MCP 工具列表更新后需要重新连接一次客户端。明确需要交互窗口时传 `visible:true`；否则启动器隐藏窗口。
+`ensure` / `launch` 会先核对目标工程，已有其他工程不能算目标已打开；新进程就绪后也只匹配目标。MCP 工具列表更新后需要重新连接一次客户端。默认显示编辑器窗口：Windows 下隐藏启动可能导致 Unity 在建窗前卡住；如需尝试隐藏可传 `visible:false`。
 
 **编辑器约束**：插件不调用 `System.Diagnostics.Process`，以避免部分裁剪版编辑器发生原生崩溃；队列在帧循环中启动，避免工程打开回调重入。
 
@@ -197,3 +198,7 @@ v0.1.0 —— 核心链路已验证。计划中：transition/controller 编辑�
 ## License
 
 MIT（见 [LICENSE](LICENSE)）。与 FairyGUI 官方无关联，插件通过官方公开插件 API 工作。
+
+`operation_status`（CLI：`node cli/fgui.mjs operation-status`）返回 `busy`、`publishing`、`current`、`queuedCount` 和 `queue`；操作包含命令、包、组件、目标和等待时长。状态只覆盖本桥接实例；编辑器界面操作和其他插件的操作不在统计范围。同步操作在编辑器主线程执行，查询只能在其结束后处理。
+
+协作编辑前调用 `acquire_lock`：组件锁传 `{"scope":"component","pkg":"包名","name":"组件名","owner":"调用方"}`；项目锁传 `{"scope":"project","owner":"调用方"}`。返回的 `token` 在后续命令中作为 `lock_token` 传入，完成后调用 `release_lock`（传 `lock_token`）。锁默认 5 分钟过期，可用 `lease_ms` 指定 1 秒至 1 小时。组件锁阻止其他调用方操作同一组件及发布；项目锁阻止其他写操作及发布。发布执行期间队列暂停，锁请求等待发布结束。未持锁的调用仍可操作未锁定资源；需要跨多个调用保持独占时，所有调用方须先取得锁。锁在桥重启或工程关闭时清除；编辑器界面、磁盘直接修改及其他插件不受锁约束。

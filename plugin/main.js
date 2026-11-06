@@ -16,6 +16,7 @@ var Bridge = {
     pendingAccept: null,   // IAsyncResult of BeginGetContext
     queue: [],             // [{ctx, cmd, args}]
     current: null,         // command being executed across frames (publish)
+    locks: [],
     wantServer: false,     // start/restart the listener on the next frame tick
     destroyed: false,
     toolMenu: null,
@@ -145,6 +146,75 @@ COMMANDS.ping = function (a) {
     };
     try { result.runInBackground = !!CS.UnityEngine.Application.runInBackground; } catch (e) { }
     return ok(result);
+};
+
+// Leases span multiple calls. All checks and mutations run on the editor thread.
+function liveLocks() {
+    var now = Date.now();
+    Bridge.locks = Bridge.locks.filter(function (lock) { return lock.expiresAt > now; });
+    return Bridge.locks;
+}
+function lockScope(a) {
+    if (!a.pkg || !a.name) throw "pkg and name required for component lock";
+    return String(getPkg(a.pkg).id) + ":" + String(a.name);
+}
+COMMANDS.acquire_lock = function (a) {
+    var scope = a.scope === "project" ? "project" : (a.scope === "component" ? lockScope(a) : null);
+    if (!scope) throw "scope must be project or component";
+    var locks = liveLocks();
+    for (var i = 0; i < locks.length; i++)
+        if (scope === "project" || locks[i].scope === "project" || locks[i].scope === scope)
+            throw "lock conflict: " + locks[i].scope;
+    var duration = Number(a.lease_ms || 300000);
+    if (!isFinite(duration) || duration < 1000 || duration > 3600000) throw "lease_ms must be between 1000 and 3600000";
+    var token = String(CS.System.Guid.NewGuid().ToString("N"));
+    var lock = {scope:scope, token:token, expiresAt:Date.now() + duration, owner:a.owner ? String(a.owner) : null};
+    locks.push(lock);
+    return ok(lock);
+};
+COMMANDS.release_lock = function (a) {
+    var locks = liveLocks();
+    for (var i = 0; i < locks.length; i++) if (locks[i].token === a.lock_token) {
+        locks.splice(i, 1); return ok({released:true});
+    }
+    throw "lock not found or expired";
+};
+function checkLocks(cmd, a) {
+    var reads = {ping:1, project_info:1, operation_status:1, list_packages:1, list_items:1,
+        read_component:1, export_strings:1, screenshot:1, bridge_log:1, acquire_lock:1, release_lock:1};
+    if (reads[cmd]) return;
+    var componentCommands = {create_component:1, delete_item:1, open_doc:1, close_doc:1,
+        list_children:1, insert_object:1, set_property:1, remove_object:1};
+    var scope = componentCommands[cmd] ? lockScope(a) : "project";
+    var locks = liveLocks();
+    var valid = !a.lock_token;
+    for (var i = 0; i < locks.length; i++) {
+        var lock = locks[i];
+        if (lock.token === a.lock_token && (lock.scope === "project" || lock.scope === scope)) valid = true;
+        if ((scope === "project" || lock.scope === "project" || lock.scope === scope) &&
+            (lock.token !== a.lock_token || (scope === "project" && lock.scope !== "project")))
+            throw "lock conflict: " + lock.scope;
+    }
+    if (!valid) throw "lock token expired, invalid, or does not cover operation";
+}
+
+// Read directly during queue polling so a long-running publish cannot block status.
+COMMANDS.operation_status = function () {
+    var now = Date.now();
+    function describe(job) {
+        if (!job) return null;
+        return { command: job.cmd, package: job.args.pkg || null,
+            component: job.args.name || null, target: job.args.target || null,
+            receivedAt: job.receivedAt, elapsedMs: now - job.receivedAt };
+    }
+    var pending = [];
+    for (var i = 0; i < Bridge.queue.length; i++) {
+        var item = Bridge.queue[i];
+        if (typeof item.deadlineMs !== "number" || item.deadlineMs > now) pending.push(describe(item));
+    }
+    return ok({ busy: Bridge.current != null || pending.length > 0,
+        publishing: Bridge.current != null && Bridge.current.cmd === "publish",
+        current: describe(Bridge.current), queuedCount: pending.length, queue: pending, locks: liveLocks().map(function (l) { return {scope:l.scope, owner:l.owner, expiresAt:l.expiresAt}; }) });
 };
 
 COMMANDS.project_info = function (a) {
@@ -513,7 +583,7 @@ function pumpAccepts() {
             var msg = JSON.parse(CS.System.IO.File.ReadAllText(claimed));
             if (!msg || !msg.cmd || typeof msg.deadlineMs !== "number" || Date.now() >= msg.deadlineMs) continue;
             var ctx = {id:match[1]};
-            if (msg.cmd === "ping" || msg.cmd === "project_info") {
+            if (msg.cmd === "ping" || msg.cmd === "project_info" || msg.cmd === "operation_status") {
                 try { writeResponse(ctx, 200, COMMANDS[msg.cmd](msg.args || {})); }
                 catch (e) { writeResponse(ctx, 200, fail(msg.cmd + ": " + e)); }
             } else {
@@ -544,6 +614,8 @@ function stepQueue() {
         return;
     }
     var cmd = next.cmd;
+    try { checkLocks(cmd, next.args); }
+    catch (e) { writeResponse(next.ctx, 200, fail(String(e))); return; }
     if (ASYNC_STARTERS[cmd]) {
         var job = { ctx: next.ctx, cmd: cmd, args: next.args, receivedAt: next.receivedAt };
         try {
@@ -639,6 +711,7 @@ function stopServer() {
     }
     var queued = Bridge.queue;
     Bridge.queue = [];
+    Bridge.locks = [];
     for (var i = 0; i < queued.length; i++) {
         writeResponse(queued[i].ctx, 503, fail("project closed or bridge stopped"));
     }

@@ -60,6 +60,16 @@ try {
     }));
     assert.deepEqual(await Promise.all(children),[0,1,2,3,4,5,6,7]);
     assert.equal(executions,38);
+    // Component leases coordinate multi-call edits and block project-wide operations.
+    context.CS.System.Guid={NewGuid:()=>({ToString:()=>Math.random().toString(16).slice(2)})};
+    App.project.GetPackageByName=()=>({id:'package1',opened:true});
+    const lease=(await request(url,'acquire_lock',{scope:'component',pkg:'P',name:'A'},1000)).data;
+    assert(lease.token);
+    assert.equal((await request(url,'acquire_lock',{scope:'component',pkg:'P',name:'A'},1000)).ok,false);
+    assert.equal((await request(url,'publish',{pkg:'P',lock_token:lease.token},1000)).ok,false);
+    assert.equal((await request(url,'save_all',{},1000)).ok,false);
+    assert.equal((await request(url,'release_lock',{lock_token:lease.token},1000)).ok,true);
+    assert.equal((await request(url,'save_all',{lock_token:lease.token},1000)).ok,false);
     // A long asynchronous publish must not block discovery; queued edits wait.
     let finish=false;
     context.ASYNC_STARTERS.slow = job => { job.started=true; };

@@ -229,7 +229,9 @@ if (cmd === "launch" || cmd === "ensure") {
     const extra = Array.isArray(a.args) ? a.args.map(String) : [];
     const child = isMacApp
         ? spawn("open", ["-a", editor, proj], { detached: true, stdio: "ignore" })
-        : spawn(editor, [proj, ...extra], { detached: true, stdio: "ignore", windowsHide: a.visible !== true, cwd: path.dirname(editor) });
+        // Unity-based FairyGUI can stall before creating a window when started
+        // with SW_HIDE. Start normally unless the caller explicitly requests it.
+        : spawn(editor, [proj, ...extra], { detached: true, stdio: "ignore", windowsHide: a.visible === false, cwd: path.dirname(editor) });
     let exited = null;
     child.on('exit', (code, signal) => { exited = {code, signal}; });
     try {
@@ -273,7 +275,7 @@ usage: fgui <command> ['{"json":"args"}']
 legacy HTTP fallback: ${BASE} (file queues discovered automatically)
 
 commands are forwarded verbatim to the editor plugin, e.g.:
-  ping | project-info | list-packages | list-items | read-component
+  ping | operation-status | acquire-lock | release-lock | project-info | list-packages | list-items | read-component
   create-component | delete-item | open-doc | close-doc | list-children
   insert-object | set-property | remove-object | save-all | refresh
   publish | screenshot | bridge-log
