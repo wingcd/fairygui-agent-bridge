@@ -10,6 +10,24 @@
 
 FairyGUI 编辑器官方没有 MCP/对外 CLI（命令行 batchmode 发布是付费专业版功能），本项目用**编辑器插件**补上这一环，实测**免费版编辑器即可发布**。
 
+## 独立 Node 服务（无需打开编辑器）
+
+`standalone-node/` 提供正在完善的独立 CLI 和 MCP 服务。**一个服务可以操作多个项目**：每次调用都传入 `project`，指向项目目录或 `.fairy` 文件。
+
+```powershell
+cd standalone-node
+npm ci
+node http-server.mjs --port 7532
+```
+
+JSON-RPC 地址为 `http://127.0.0.1:7532/rpc`，MCP Streamable HTTP 地址为 `http://127.0.0.1:7532/mcp`；也可用 `node mcp-server.mjs` 启动 stdio MCP。CLI 示例：
+
+```powershell
+node fgui.mjs list_packages '{"project":"D:/work/my-ui-project"}'
+```
+
+服务支持项目和组件读写、资源导入、校验、图集及实验性发布。项目级发布和预检默认按导出资源及跨包依赖处理；设置 `exported_only: false` 可包含全部已注册资源。写操作使用读取结果中的 `sha256` 防止覆盖过期版本。16 个 Cocos 样例的筛选发布结果已经过编辑器数据和图集像素对比；并非全部编辑器功能和运行时渲染均已验证。完整用法、限制和测试命令见 [独立服务说明](standalone-node/README.md)。Python 实现仍保留在 `standalone/`。
+
 ## 架构
 
 ```

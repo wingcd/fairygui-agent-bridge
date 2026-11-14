@@ -1,0 +1,18 @@
+{
+  "name": "fgui-standalone-node",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@xmldom/xmldom": "0.9.12",
+    "ajv": "^8.20.0",
+    "htmlparser2": "12.0.0",
+    "playwright-core": "^1.65.1",
+    "sharp": "0.35.5"
+  },
+  "scripts": {
+    "test": "node --test *.test.mjs"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  }
+}

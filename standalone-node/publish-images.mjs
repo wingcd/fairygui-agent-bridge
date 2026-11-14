@@ -1,0 +1,360 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {projectRoot,isFairyDescriptorName,packages,resources,componentPath,children,attr,parse} from './project.mjs';
+import {decodeImage,encodePng,makePixelMask} from './images.mjs';
+import {plan,planGrouped,render} from './atlas.mjs';
+import {encodeImagePackage} from './binary-writer.mjs';
+import {encodeXmlImagePackage} from './xml-package-writer.mjs';
+import {validatePublished} from './published.mjs';
+import {inspectImagePackage} from './image-package-reader.mjs';
+import {inspectWav,inspectMp3,inspectOggVorbis} from './sound.mjs';
+import {readJta} from './jta.mjs';
+import {readBitmapFont} from './bitmap-font.mjs';
+import {readTransitions} from './transitions.mjs';
+import {exportedClosure} from './exported-closure.mjs';
+import {richTextUrls} from './references.mjs';
+
+const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+export async function publishImages(args, {allowSounds=false,allowComponents=false,preselectedClosure=null,recordSource=null} = {}) {
+  if(process.platform!=='win32') throw new Error('publication requires a no-replace directory rename, currently supported only on Windows');
+  if(typeof args.output!=='string' || !args.output) throw new Error('output is required');
+  const root=projectRoot(args.project), output=path.resolve(args.output), parent=path.dirname(output);
+  try {await fs.lstat(output);throw new Error('output directory must not already exist');} catch(e) {if(e.code!=='ENOENT') throw e;}
+  const found=packages(root).filter(p=>args.pkg===path.basename(p.folder) || args.pkg===attr(p.tree,'id'));
+  if(found.length!==1) throw new Error('package not found or ambiguous');
+  const {folder,tree}=found[0], packageFile=path.join(folder,'package.xml'), snapshot=[];
+  async function tracked(file,optional=false) {try {const data=await fs.readFile(file);snapshot.push([file,recordSource?recordSource(file,data):hash(data)]);return data;} catch(e) {if(optional && e.code==='ENOENT') {if(recordSource)recordSource(file,null);snapshot.push([file,null]);return null;}throw e;}}
+  const packageBytes=await tracked(packageFile), refreshed=packages(root).find(p=>p.folder===folder);
+  if(!refreshed || hash(await fs.readFile(packageFile))!==hash(packageBytes)) throw new Error('publication source changed');
+  if(args.exported_only!==undefined&&typeof args.exported_only!=='boolean')throw new Error('exported_only must be a boolean');
+  const packageList=packages(root),externalFiles=new Set(),dependencies=new Map();
+  for(const pkg of packageList){const file=path.join(pkg.folder,'package.xml'),bytes=await tracked(file);pkg.tree=parse(bytes,file);if(pkg.tree.tagName!=='packageDescription')throw new Error('invalid package description');}
+  const packageFolders=packageList.map(p=>p.folder),closure=args.exported_only?(preselectedClosure??await exportedClosure(packageList,tracked)):null,selected=resources(refreshed.tree).filter(item=>!closure||closure.get(folder).has(attr(item,'id')));
+  function reference(pkg,item){const pkgId=attr(pkg.tree,'id');if(!pkgId)throw new Error('referenced package has no ID');const file=componentPath(pkg.folder,item);if(pkg.folder!==folder){dependencies.set(pkgId,{id:pkgId,name:path.basename(pkg.folder)});externalFiles.add(file);}return file;}
+  const urls=new Map();for(const pkg of packageList)for(const item of resources(pkg.tree)){if(closure&&!closure.get(pkg.folder).has(attr(item,'id')))continue;for(const address of new Set([attr(pkg.tree,'id')+attr(item,'id'),path.basename(pkg.folder)+'/'+path.parse(attr(item,'name')||'').name])){let entries=urls.get(address);if(!entries){entries=[];urls.set(address,entries);}entries.push([pkg,item]);}}
+  function requireLocalUrl(url,types) {
+    if(typeof url!=='string'||!url.startsWith('ui://'))throw new Error('invalid UI resource URL');
+    const matches=(urls.get(url.slice(5))??[]).filter(([,item])=>types.includes(item.tagName));
+    if(matches.length!==1)throw new Error(`UI resource URL is missing or ambiguous: ${url}`);reference(...matches[0]);
+  }
+  if(!selected.length)throw new Error('package contains no resources');
+  const unsupported=selected.find(i=>i.tagName!=='image' && !(allowSounds && ['sound','movieclip','font'].includes(i.tagName)) && !(allowComponents && i.tagName==='component'));
+  if(unsupported)throw new Error(`unsupported resource type ${unsupported.tagName}: ${attr(unsupported,'name')||attr(unsupported,'id')||'?'}`);
+  const settingsBytes=await tracked(path.join(root,'settings','Publish.json'),true);
+  let settings={};if(settingsBytes) {try {settings=JSON.parse(settingsBytes.toString('utf8').replace(/^\uFEFF/,''));} catch {throw new Error('invalid project Publish.json');}}
+  if(!settings || typeof settings!=='object' || Array.isArray(settings)) throw new Error('invalid project Publish.json');
+  const atlas=settings.atlasSetting ?? {};
+  if(settings.atlasSetting===null || typeof atlas!=='object' || Array.isArray(atlas)) throw new Error('invalid atlasSetting');
+  for(const key of ['binaryFormat','compressDesc']) if(key in settings && typeof settings[key]!=='boolean') throw new Error(`invalid publication setting ${key}`);
+  if(args.binary_format!==undefined&&typeof args.binary_format!=='boolean')throw new Error('binary_format must be a boolean');
+  const xmlFormat=(args.binary_format??settings.binaryFormat)===false;
+  if(xmlFormat&&selected.some(item=>!['image','sound','component'].includes(item.tagName)))throw new Error('XML publication currently supports images, WAV sounds and simple components only');
+  if(xmlFormat&&settings.compressDesc===true)throw new Error('XML publication with compressDesc is not supported');
+  const compressed=settings.compressDesc===true;let descriptorNames=null,xmlCocosTarget=false;
+  if(compressed||xmlFormat){const requested=await fs.realpath(args.project),stat=await fs.stat(requested);descriptorNames=stat.isFile()?[path.basename(requested)]:(await fs.readdir(root)).filter(n=>isFairyDescriptorName(n)).sort();if(!descriptorNames.length)throw new Error('project descriptor missing');for(const name of descriptorNames){const descriptor=parse(await tracked(path.join(root,name)),name);if(descriptor.tagName!=='projectDescription')throw new Error('invalid project descriptor');if(compressed&&attr(descriptor,'type')!=='CocosCreator')throw new Error('compressed publication is unsupported for this project target');if(xmlFormat&&attr(descriptor,'type')==='CocosCreator')xmlCocosTarget=true;}}
+
+  if(atlas.sizeOption && atlas.sizeOption!=='pot') throw new Error('unsupported atlas sizeOption');
+  for(const key of ['trimImage','allowRotation','paging','forceSquare']) if(key in atlas && typeof atlas[key]!=='boolean') throw new Error(`invalid atlasSetting ${key}`);
+  const width=args.width ?? atlas.maxSize ?? 2048, height=args.height ?? atlas.maxSize ?? 2048, padding=args.padding ?? 2;
+  const rotate=args.rotate_images ?? atlas.allowRotation ?? false, trim=args.trim_images ?? atlas.trimImage ?? false, shrink=args.shrink_atlas ?? (atlas.sizeOption==='pot'), optimize=args.optimize_atlas ?? false;
+  if([rotate,trim,shrink,optimize].some(x=>typeof x!=='boolean')) throw new Error('invalid atlas option');
+  const extension=settings.fileExtension ?? 'bin';if(typeof extension!=='string' || !/^[A-Za-z0-9_-]{1,16}$/.test(extension)) throw new Error('invalid project publication file extension');
+  const id=attr(refreshed.tree,'id'), publish=children(refreshed.tree,'publish')[0], name=attr(publish||refreshed.tree,'name')||path.basename(folder);
+  if(!id || !name || name==='.' || name==='..' || /[\\/:*?"<>|\x00-\x1f]/.test(name)) throw new Error('invalid package id or output name');
+  const warnings=compressed?[{setting:'compressDesc',message:'output is uncompressed, matching observed Cocos Creator editor publication'}]:[],ids=new Set(), registeredIds=new Set(selected.map(i=>attr(i,'id'))), images=[], sounds=[], movieclips=[], fonts=[], components=[], sources=Object.create(null), duplicate=[];
+  if(xmlCocosTarget)warnings.push({setting:'binaryFormat',message:'the referenced FairyGUI Cocos Creator runtime rejects legacy XML packages; use binaryFormat: true for that runtime'});
+  for(const item of selected) {
+    const itemId=attr(item,'id'), filename=attr(item,'name'), allowed=new Set(['id','name','path','exported','scale','scale9grid','duplicatePadding','texture']);
+    if(!itemId || itemId.startsWith('atlas') || ids.has(itemId) || !filename || Array.from(item.attributes).some(a=>!allowed.has(a.name)) || children(item).length) throw new Error('invalid, duplicate, reserved or unsupported image metadata');ids.add(itemId);
+    const bytes=await tracked(componentPath(folder,item));
+    if(item.tagName==='component') {
+      if(Array.from(item.attributes).some(a=>!['id','name','path','exported'].includes(a.name)))throw new Error('unsupported component resource settings');
+      const exported=attr(item,'exported');if(exported && !['true','false'].includes(exported))throw new Error('invalid exported attribute');
+      const node=parse(bytes,'component'), displays=children(node,'displayList');
+      const xmlChildAttrs={image:['id','name','src','xy'],text:['id','name','xy','size','text','fontSize','color'],graph:['id','name','xy','size','type','lineSize','lineColor','fillColor']};
+      if(xmlFormat&&(Array.from(node.attributes).some(a=>a.name!=='size')||children(node).some(n=>n.tagName!=='displayList')||displays.length!==1||children(displays[0]).some(n=>!xmlChildAttrs[n.tagName]||Array.from(n.attributes).some(a=>!xmlChildAttrs[n.tagName].includes(a.name))||children(n).length||(n.tagName==='graph'&&attr(n,'type')!=='rect'))))throw new Error(`unsupported XML component features in ${filename}`);
+      const unsupportedRootAttrs=Array.from(node.attributes).filter(a=>!['size','pivot','margin','overflow','opaque','mask','hitTest','reversedMask','idnum','extention','initName','bgColor','bgColorEnabled','designImageLayer','designImageAlpha','scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes'].includes(a.name)).map(a=>a.name),unsupportedRootNodes=children(node).filter(n=>!['displayList','controller','relation','transition','Button','ComboBox','ProgressBar','Slider'].includes(n.tagName)).map(n=>n.tagName);
+      if(node.tagName!=='component' || unsupportedRootAttrs.length || unsupportedRootNodes.length || displays.length!==1 || displays[0].attributes.length)throw new Error(`unsupported component settings in ${filename}: attributes=${unsupportedRootAttrs.join(',')||'-'}, elements=${unsupportedRootNodes.join(',')||'-'}, displayLists=${displays.length}`);
+      const hasText=n=>Array.from(n.childNodes).some(c=>(c.nodeType===3 || c.nodeType===4) && c.data.trim());
+      if(hasText(node)||hasText(displays[0]))throw new Error('unsupported component text content');
+      const dimensions=(attr(node,'size')||'').split(',');if(dimensions.length!==2 || dimensions.some(v=>!/^\d+$/.test(v) || Number(v)<1 || Number(v)>2147483647))throw new Error('invalid component size');
+      const controllers=[],controllerNames=new Set();
+      for(const ctrl of children(node,'controller')) {
+        const name=attr(ctrl,'name'),parts=attr(ctrl,'pages')?attr(ctrl,'pages').split(','):[],selected=attr(ctrl,'selected')??'0';
+        if(!name||controllerNames.has(name)||Array.from(ctrl.attributes).some(a=>!['name','pages','selected'].includes(a.name))||hasText(ctrl))throw new Error('unsupported or duplicate controller');
+        const ids=parts.filter((_,i)=>i%2===0);
+        if(parts.length%2||ids.some(id=>!id)||new Set(ids).size!==ids.length||ids.length>32767||!/^\d+$/.test(selected)||Number(selected)>32767||(ids.length?Number(selected)>=ids.length:Number(selected)!==0))throw new Error('invalid controller pages or selection');
+        const actions=children(ctrl).map(action=>{if(action.tagName!=='action'||attr(action,'type')!=='play_transition'||!attr(action,'transition')||Array.from(action.attributes).some(a=>!['type','fromPage','toPage','transition'].includes(a.name))||children(action).length||hasText(action))throw new Error('unsupported controller action');const from=attr(action,'fromPage')?attr(action,'fromPage').split(','):[],to=attr(action,'toPage')?attr(action,'toPage').split(','):[];if([...from,...to].some(p=>!ids.includes(p)))throw new Error('controller action references unknown page');return {type:0,from,to,transition:attr(action,'transition'),times:1,delay:0,stopOnExit:false};});if(actions.length>32767)throw new Error('too many controller actions');
+        controllerNames.add(name);controllers.push({name,pages:ids.map((id,i)=>[id,parts[i*2+1]]),actions});
+      }
+      const allDisplay=children(displays[0]),allIds=allDisplay.map(n=>attr(n,'id'));
+      if(allIds.some(id=>!id)||new Set(allIds).size!==allIds.length)throw new Error('invalid or duplicate child IDs');
+      const groups=new Map(allDisplay.filter(n=>n.tagName==='group').map(n=>[attr(n,'id'),n]));
+      for(const group of groups.values()){const advanced=attr(group,'advanced')??'false';if(!['true','false'].includes(advanced))throw new Error('invalid group');if(advanced==='false'&&(Array.from(group.attributes).some(a=>!['id','name','xy','size','advanced','locked'].includes(a.name))||children(group).length||hasText(group)))throw new Error('unsupported editor group settings');}
+      const displayNodes=allDisplay.filter(n=>n.tagName!=='group'||attr(n,'advanced')==='true'),displayIds=displayNodes.map(n=>attr(n,'id'));
+      if(displayIds.length>32767)throw new Error('too many child objects');
+      const componentOptions={transitions:readTransitions(node,displayIds,requireLocalUrl,warnings,itemId)},overflow=attr(node,'overflow')??'visible';if(!['visible','hidden','scroll'].includes(overflow))throw new Error('unsupported component overflow');componentOptions.overflow=['visible','hidden','scroll'].indexOf(overflow);
+      if(controllers.some(c=>c.actions.some(a=>!componentOptions.transitions.some(t=>t.name===a.transition))))throw new Error('controller action references unknown transition');
+      if(!['horizontal','vertical','both'].includes(attr(node,'scroll')??'vertical')||!['default','visible','auto','hidden'].includes(attr(node,'scrollBar')??'default'))throw new Error('invalid scroll configuration');
+      if(node.hasAttribute('scrollBarFlags')&&(!/^\d+$/.test(attr(node,'scrollBarFlags'))||Number(attr(node,'scrollBarFlags'))>2147483647))throw new Error('invalid scrollBarFlags');
+      if(node.hasAttribute('scrollBarMargin')){const values=attr(node,'scrollBarMargin').split(',');if(values.length!==4||values.some(v=>!/^\d+$/.test(v)||Number(v)>100000))throw new Error('invalid scrollBarMargin');}
+      const scrollResources=[];for(const key of ['scrollBarRes','ptrRes']){const values=(attr(node,key)??',').split(',');if(values.length!==2)throw new Error(`invalid ${key}`);for(const url of values){if(url)requireLocalUrl(url,['component']);scrollResources.push(url||null);}}
+      if(overflow==='scroll')componentOptions.scroll={type:['horizontal','vertical','both'].indexOf(attr(node,'scroll')??'vertical'),barDisplay:['default','visible','auto','hidden'].indexOf(attr(node,'scrollBar')??'default'),flags:Number(attr(node,'scrollBarFlags')??'0'),barMargin:node.hasAttribute('scrollBarMargin')?attr(node,'scrollBarMargin').split(',').map(Number):null,resources:scrollResources};
+      const extensionName=attr(node,'extention'),extensions=new Map([[null,0],['Label',11],['Button',12],['ComboBox',13],['ProgressBar',14],['Slider',15],['ScrollBar',16]]);
+      if(!extensions.has(extensionName))throw new Error('unsupported component extension');componentOptions.extension=extensions.get(extensionName);
+      const optionNodes=children(node).filter(n=>['Button','ComboBox','ProgressBar','Slider'].includes(n.tagName));
+      if(optionNodes.length>1 || (optionNodes.length&&optionNodes[0].tagName!==extensionName))throw new Error('invalid component extension settings');
+      if(extensionName==='Button') {const config=optionNodes[0],mode=attr(config??node,'mode')??'Common',effect=attr(config??node,'downEffect')??'none',value=attr(config??node,'downEffectValue')??'0.8';
+        if(config&&(children(config).length||hasText(config)||Array.from(config.attributes).some(a=>!['mode','sound','downEffect','downEffectValue'].includes(a.name))))throw new Error('unsupported Button settings');
+        componentOptions.buttonSound=config?attr(config,'sound')||null:null;if(componentOptions.buttonSound)requireLocalUrl(componentOptions.buttonSound,['sound']);
+        componentOptions.buttonMode=['Common','Check','Radio'].indexOf(mode);componentOptions.buttonEffect=['none','dark','scale'].indexOf(effect);componentOptions.buttonEffectValue=Number(value);
+        if(componentOptions.buttonMode<0||componentOptions.buttonEffect<0||!value.trim()||!Number.isFinite(Number(value))||Number(value)<0||Number(value)>10)throw new Error('invalid Button settings');
+      } else if(['ProgressBar','Slider'].includes(extensionName)) {const config=optionNodes[0],title=attr(config??node,'titleType')??'percent',reverse=attr(config??node,'reverse')??'false';
+        if(config&&(children(config).length||hasText(config)||Array.from(config.attributes).some(a=>!['titleType','reverse'].includes(a.name))))throw new Error('unsupported progress settings');
+        componentOptions.titleType=['percent','valueAndmax','value','max'].indexOf(title);componentOptions.reverse=reverse==='true';if(componentOptions.titleType<0||!['true','false'].includes(reverse))throw new Error('invalid progress settings');
+      } else if(extensionName==='ComboBox'&&optionNodes.length) {const config=optionNodes[0];if(Array.from(config.attributes).some(a=>a.name!=='dropdown')||children(config).length||hasText(config))throw new Error('unsupported ComboBox settings');componentOptions.comboDropdown=attr(config,'dropdown')||null;if(componentOptions.comboDropdown)requireLocalUrl(componentOptions.comboDropdown,['component']);}
+      if(extensionName==='ScrollBar'&&['bar','grip'].some(name=>children(displays[0]).filter(n=>attr(n,'name')===name).length!==1))throw new Error('ScrollBar requires bar and grip children');
+      if(node.hasAttribute('idnum')&&!/^\d+$/.test(attr(node,'idnum')))throw new Error('invalid editor id counter');
+      if(node.hasAttribute('pivot')){const values=attr(node,'pivot').split(',');if(values.length!==2||values.some(v=>!v.trim()||!Number.isFinite(Number(v))||Math.abs(Number(v))>100000))throw new Error('invalid component pivot');componentOptions.pivot=values.map(Number);}
+      if(node.hasAttribute('margin')){const values=attr(node,'margin').split(',');if(values.length!==4||values.some(v=>!/^\d+$/.test(v)||Number(v)>100000))throw new Error('invalid component margin');componentOptions.margin=values.map(Number);}
+      const opaque=attr(node,'opaque')??'true',reversed=attr(node,'reversedMask')??'false',mask=attr(node,'mask'),hit=attr(node,'hitTest');
+      if(!['true','false'].includes(opaque)||!['true','false'].includes(reversed)||(mask&&!displayIds.includes(mask))||(hit&&!displayIds.includes(hit))||(reversed==='true'&&!mask))throw new Error('invalid component mask or hit test');
+      componentOptions.settings={opaque:opaque==='true',mask:mask?displayIds.indexOf(mask):-1,reversedMask:reversed==='true',hitTestChild:hit?displayIds.indexOf(hit):null};
+      const relationNames=['left-left','left-center','left-right','center-center','right-left','right-center','right-right','top-top','top-middle','top-bottom','middle-middle','bottom-top','bottom-middle','bottom-bottom','width-width','height-height','leftext-left','leftext-right','rightext-left','rightext-right','topext-top','topext-bottom','bottomext-top','bottomext-bottom'];
+      const readRelations=(owner,ownerId=null)=>{const nodes=children(owner,'relation');if(nodes.length>255)throw new Error('too many relations');return nodes.map(relation=>{
+        if(relation.attributes.length!==2 || !relation.hasAttribute('target') || !relation.hasAttribute('sidePair') || children(relation).length || hasText(relation))throw new Error('invalid relation settings');
+        const target=attr(relation,'target'),index=target?displayIds.indexOf(target):-1;
+        if(target&&(index<0||target===ownerId))throw new Error('invalid relation target');
+        const types=attr(relation,'sidePair').split(',').map(pair=>relationNames.indexOf(({width:'width-width',height:'height-height'})[pair]??pair));
+        if(types.length>255||types.some(type=>type<0))throw new Error('unsupported relation type');return {target:index,types};
+      });};
+      const rootRelations=readRelations(node),componentChildren=[],childIds=new Set();
+      for(const child of displayNodes) {
+        const inputFlag=attr(child,'input');
+        if(inputFlag!==null && !['true','false'].includes(inputFlag))throw new Error('invalid input flag');
+        const type=child.tagName==='text'&&inputFlag==='true'?'inputtext':child.tagName==='jta'?'movieclip':child.tagName,isText=['text','richtext','inputtext'].includes(type);
+        if(type==='inputtext' && inputFlag==='false')throw new Error('invalid input flag');
+        const allowedChild=['id','name','pkg','xy','size','scale','pivot','anchor','alpha','rotation','visible','touchable','grayed','restrictSize','locked','aspect','group',...(type==='group'?['advanced']:type==='list'?['layout','selectionMode','align','vAlign','lineGap','colGap','lineCount','colCount','lineItemCount','lineItemCount2','autoItemSize','autoClearItems','scrollItemToViewOnClick','foldInvisibleItems','renderOrder','overflow','scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','clipSoftness','margin','defaultItem','pageController','selectionController','treeView','indent','clickToExpand']:type==='loader'?['url','align','vAlign','fill','color','fillMethod','fillClockwise','fillAmount']:isText?['text','demoText','font','fontSize','color','align','vAlign','autoSize','leading','letterSpacing','underline','italic','bold','singleLine','ubb','strokeColor','shadowColor','shadowOffset',...(type!=='richtext'?['input']:[]),...(type==='inputtext'?['prompt','restrict','maxLength','keyboardType','password']:[])]:type==='graph'?['type','lineSize','lineColor','fillColor','corner','points','sides','startAngle','distances']:['src','fileName',...(type==='movieclip'?['frame','playing','color']:type==='image'?['color','flip','fillMethod','fillClockwise','fillAmount','forHitTest']:[])])];
+        const unsupportedBehaviors=children(child).filter(n=>!['relation','gearDisplay','gearDisplay2','gearXY','gearSize','gearLook','gearColor',...(type==='list'?['item']:[]),...(['component','loader'].includes(type)?['gearIcon']:[]),...(type==='component'?['Label','Button','ComboBox','ProgressBar','Slider']:[]),...(['movieclip','loader'].includes(type)?['gearAni']:[]),...(isText?['gearText','gearFontSize']:[])].includes(n.tagName)).map(n=>n.tagName),unsupportedAttrs=Array.from(child.attributes).filter(a=>!allowedChild.includes(a.name)).map(a=>a.name);
+        if(!['image','component','movieclip','graph','group','loader','text','richtext','inputtext','list'].includes(type) || unsupportedBehaviors.length || hasText(child) || unsupportedAttrs.length)throw new Error(`unsupported component child in ${filename}: ${child.tagName} ${attr(child,'id')||'?'}; attributes=${unsupportedAttrs.join(',')||'-'}, elements=${unsupportedBehaviors.join(',')||'-'}`);
+        const childId=attr(child,'id'),src=attr(child,'src'),xy=(attr(child,'xy')||'0,0').split(',');
+        if(!childId || childIds.has(childId) || (['image','component','movieclip'].includes(type)&&!src) || xy.length!==2 || xy.some(v=>!/^[-+]?\d+$/.test(v) || Number(v)<-2147483648 || Number(v)>2147483647))throw new Error('invalid component child');childIds.add(childId);
+        const result={id:childId,name:attr(child,'name'),src,x:Number(xy[0]),y:Number(xy[1]),type,relations:readRelations(child,childId)};
+        let refFolder=folder,refResources=selected;const pkgAlias=attr(child,'pkg');
+        if(pkgAlias){if(!['image','component','movieclip'].includes(type))throw new Error('package reference requires a resource child');const matches=packageList.filter(p=>pkgAlias===path.basename(p.folder)||pkgAlias===attr(p.tree,'id'));if(matches.length!==1)throw new Error('referenced package missing or ambiguous');const pkg=matches[0];refFolder=pkg.folder;refResources=resources(pkg.tree);const refs=refResources.filter(i=>i.tagName===type&&attr(i,'id')===src&&(!closure||closure.get(pkg.folder).has(attr(i,'id'))));if(refs.length!==1)throw new Error('external resource missing or ambiguous');reference(pkg,refs[0]);if(pkg.folder!==folder)result.pkg=attr(pkg.tree,'id');}
+
+        if(type==='image'&&child.hasAttribute('forHitTest')){const flag=attr(child,'forHitTest');if(!['true','false'].includes(flag))throw new Error('invalid forHitTest');if(flag==='true'){if(result.pkg||componentOptions.settings.hitTestChild!==null||componentOptions.settings.hitTestImage||xy.some(v=>Number(v)!==0)||['size','scale','pivot','rotation','flip','fillMethod'].some(k=>child.hasAttribute(k)))throw new Error('unsupported pixel hit test image geometry');componentOptions.settings.hitTestImage=src;}}
+        if(child.hasAttribute('group')){const group=groups.get(attr(child,'group'));if(!group||type==='group')throw new Error('invalid group reference');if(attr(group,'advanced')==='true')result.groupIndex=displayIds.indexOf(attr(group,'id'));}
+        const instances=children(child).filter(n=>['Label','Button','ComboBox','ProgressBar','Slider'].includes(n.tagName));if(instances.length>1)throw new Error('conflicting component instance settings');
+        if(instances.length) {const instance=instances[0],tag=instance.tagName,allowed=tag==='ComboBox'?['visibleItemCount']:tag==='Label'?['title','icon','titleColor','titleFontSize']:tag==='Button'?['title','selectedTitle','icon','selectedIcon','titleColor','titleFontSize','controller','page','checked']:['value','max','min'];
+          if((tag!=='ComboBox'&&children(instance).length)||hasText(instance)||Array.from(instance.attributes).some(a=>!allowed.includes(a.name)))throw new Error('unsupported component instance settings');
+          if(tag==='ComboBox'){const visible=attr(instance,'visibleItemCount')??'0';if(!/^\d+$/.test(visible)||Number(visible)>2147483647)throw new Error('invalid ComboBox visibleItemCount');const items=children(instance).map(entry=>{if(entry.tagName!=='item'||children(entry).length||hasText(entry)||Array.from(entry.attributes).some(a=>!['title','value','icon'].includes(a.name)))throw new Error('unsupported ComboBox item');const item=Object.fromEntries(['title','value','icon'].map(k=>[k,attr(entry,k)]));if(item.icon)requireLocalUrl(item.icon,['image','component','movieclip']);return item;});if(items.length>32767)throw new Error('too many ComboBox items');result.comboBox={items,visibleItemCount:Number(visible)};}
+          else if(['Label','Button'].includes(tag)) {const obj={title:attr(instance,'title'),icon:attr(instance,'icon')};if(obj.icon)requireLocalUrl(obj.icon,['image','component','movieclip']);
+            if(tag==='Button'){obj.selectedTitle=attr(instance,'selectedTitle');obj.selectedIcon=attr(instance,'selectedIcon');if(obj.selectedIcon)requireLocalUrl(obj.selectedIcon,['image','component','movieclip']);const controller=attr(instance,'controller'),page=attr(instance,'page'),index=controller?controllers.findIndex(c=>c.name===controller):-1,checked=attr(instance,'checked')??'false';if((controller&&index<0)||(page!==null&&(index<0||!controllers[index].pages.some(([id])=>id===page)))||!['true','false'].includes(checked))throw new Error('invalid button controller or page');Object.assign(obj,{controller:index,page,checked:checked==='true'});}
+            const color=attr(instance,'titleColor'),fontSize=attr(instance,'titleFontSize')??'0';if(color!==null){if(!/^#[0-9a-f]{6}$/i.test(color))throw new Error('invalid instance title color');obj.color=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16)).concat(255);}
+            if(!/^\d+$/.test(fontSize)||Number(fontSize)>2147483647)throw new Error('invalid instance font size');obj.fontSize=Number(fontSize);result[tag==='Label'?'label':'button']=obj;
+          } else {const values=['value','max','min'].map((key,i)=>attr(instance,key)??['50','100','0'][i]);if(values.some(v=>!/^[-+]?\d+$/.test(v)||Number(v)<-2147483648||Number(v)>2147483647))throw new Error('invalid progress instance value');result.progress=values.map(Number);result.progressKind=tag==='ProgressBar'?14:15;}
+        }
+        for(const key of ['locked','aspect'])if(child.hasAttribute(key)&&!['true','false'].includes(attr(child,key)))throw new Error(`invalid editor ${key} flag`);
+        if(child.hasAttribute('fileName')) {const matches=refResources.filter(item=>attr(item,'id')===src && item.tagName===type);if(matches.length!==1)throw new Error('fileName has no matching resource');const actual=path.relative(refFolder,componentPath(refFolder,matches[0])).replaceAll('\\','/');if(attr(child,'fileName').replaceAll('\\','/').replace(/^\/+/, '')!==actual)throw new Error('fileName does not match referenced resource');}
+        const gears=children(child).filter(n=>!['relation','Label','Button','ComboBox','ProgressBar','Slider','item'].includes(n.tagName)),seenGears=new Set();result.gears=[];
+        for(const gear of gears) {const kind={gearDisplay:'display',gearDisplay2:'display2',gearText:'text',gearIcon:'icon',gearFontSize:'fontSize',gearXY:'xy',gearSize:'size',gearLook:'look',gearColor:'color',gearAni:'animation'}[gear.tagName],index=controllers.findIndex(c=>c.name===attr(gear,'controller')),pages=attr(gear,'pages')?attr(gear,'pages').split(','):[];
+          const allowed=['controller','pages',...(kind==='display2'?['condition']:['text','icon','fontSize','xy','size','look','color','animation'].includes(kind)?['values','default',...(['xy','size','look'].includes(kind)?['tween','ease','duration','delay']:[])]:[])];
+          if(index<0||seenGears.has(kind)||Array.from(gear.attributes).some(a=>!allowed.includes(a.name))||children(gear).length||hasText(gear)||pages.length>32767||new Set(pages).size!==pages.length)throw new Error('invalid display gear or child behavior');
+          const unknownPages=pages.filter(p=>!controllers[index].pages.some(([id])=>id===p));if(unknownPages.length)warnings.push({component:itemId,child:childId,gear:gear.tagName,pages:unknownPages,message:'unknown gear pages retained to match editor output'});
+          seenGears.add(kind);const data={type:kind,controllerIndex:index,pages};
+          if(kind==='display2'){const condition=attr(gear,'condition')??'0';if(!['0','1'].includes(condition))throw new Error('invalid display2 condition');data.condition=Number(condition);}
+          if(['xy','size','look'].includes(kind)) {
+            const tween=attr(gear,'tween')??'false';if(!['true','false'].includes(tween)||(tween==='false'&&['ease','duration','delay'].some(k=>gear.hasAttribute(k))))throw new Error('invalid gear tween');
+            if(tween==='true'){const names=['Linear',...['Sine','Quad','Cubic','Quart','Quint','Expo','Circ','Elastic','Back','Bounce'].flatMap(f=>['In','Out','InOut'].map(mode=>`${f}.${mode}`))],ease=names.indexOf(attr(gear,'ease')??'Quad.Out'),duration=attr(gear,'duration')??'0.3',delay=attr(gear,'delay')??'0';if(ease<0||[duration,delay].some(v=>!v.trim()||!Number.isFinite(Number(v))||Number(v)<0||Number(v)>100000))throw new Error('invalid gear tween timing');data.tween={ease,duration:Number(duration),delay:Number(delay)};}
+          }
+          if(['text','icon','fontSize','xy','size','look','color','animation'].includes(kind)) {
+            if(!gear.hasAttribute('values'))throw new Error('gear requires values');const values=attr(gear,'values').split('|');if(values.length!==pages.length)throw new Error('gear values and pages differ');
+            const parseSize=value=>{if(!/^\d+$/.test(value)||Number(value)>2147483647)throw new Error('invalid font size gear value');return Number(value);};
+            const parseNumeric=value=>{const p=value.split(',');
+              if(kind==='look'){if(![3,4].includes(p.length)||p.slice(2).some(v=>!['0','1'].includes(v))||p.slice(0,2).some(v=>!v.trim()||!Number.isFinite(Number(v)))||Number(p[0])<0||Number(p[0])>1||Math.abs(Number(p[1]))>100000)throw new Error('invalid gear look');return [Number(p[0]),Number(p[1]),Number(p[2]),p.length===4?Number(p[3]):1];}
+              if(!(kind==='size'?[2,4]:[2]).includes(p.length)||p.slice(0,2).some(v=>!/^[-+]?\d+$/.test(v)||Number(v)<-2147483648||Number(v)>2147483647||(kind==='size'&&Number(v)<0))||p.slice(2).some(v=>!v.trim()||!Number.isFinite(Number(v))||Math.abs(Number(v))>100000))throw new Error('invalid gear position or size');
+              return [...p.slice(0,2).map(Number),...(kind==='size'?(p.length===4?p.slice(2).map(Number):[1,1]):[])];};
+            const parseColor=value=>{const colors=value.split(',');if(![1,2].includes(colors.length)||colors.some(v=>!/^#[0-9a-f]{6}$/i.test(v)))throw new Error('invalid gear color');if(colors.length===1)colors.push('#000000');return colors.map(v=>[1,3,5].map(i=>parseInt(v.slice(i,i+2),16)).concat(255));};
+            const parseAnimation=value=>{const parts=value.split(',');if(parts.length!==2||!/^\d+$/.test(parts[0])||Number(parts[0])>2147483647||!['p','s'].includes(parts[1]))throw new Error('invalid animation gear value');return {frame:Number(parts[0]),playing:parts[1]==='p'};};
+            const convert=kind==='fontSize'?parseSize:['xy','size','look'].includes(kind)?parseNumeric:kind==='color'?parseColor:kind==='animation'?parseAnimation:v=>v;
+            data.values=kind==='icon'?values.map(v=>v||null):kind==='text'?values:values.map(v=>v==='-'?null:convert(v));
+            if(gear.hasAttribute('default'))data.default=kind==='icon'?(attr(gear,'default')||null):convert(attr(gear,'default'));
+            if(kind==='icon')for(const url of [...data.values,...(Object.hasOwn(data,'default')?[data.default]:[])])if(url)requireLocalUrl(url,['image','component','movieclip']);
+          }
+          result.gears.push(data);
+        }
+        if(child.hasAttribute('size')) {const size=attr(child,'size').split(',');if(size.length!==2 || size.some(v=>!/^\d+$/.test(v) || Number(v)>2147483647))throw new Error('invalid child size');result.size=size.map(Number);}
+        for(const key of ['scale','pivot'])if(child.hasAttribute(key)){const values=attr(child,key).split(',');if(values.length!==2||values.some(v=>!v.trim()||!Number.isFinite(Number(v))||Math.abs(Number(v))>100000))throw new Error(`invalid child ${key}`);result[key]=values.map(Number);}
+        for(const key of ['alpha','rotation'])if(child.hasAttribute(key)){const value=attr(child,key);const n=Number(value);if(!value.trim()||!Number.isFinite(n)||Math.abs(n)>100000||(key==='alpha'&&(n<0||n>1)))throw new Error(`invalid child ${key}`);result[key]=n;}
+        for(const key of ['anchor','visible','touchable','grayed'])if(child.hasAttribute(key)){const value=attr(child,key);if(!['true','false'].includes(value)||(key==='anchor'&&!result.pivot))throw new Error(`invalid child ${key}`);result[key]=value==='true';}
+        if(child.hasAttribute('restrictSize')){const values=attr(child,'restrictSize').split(',');if(values.length!==4||values.some(v=>!/^\d+$/.test(v)||Number(v)>100000))throw new Error('invalid child restrictSize');result.constraints=values.map(Number);if([0,2].some(i=>result.constraints[i+1]&&result.constraints[i]>result.constraints[i+1]))throw new Error('invalid child restrictSize');}
+        if(type==='movieclip') {const frame=attr(child,'frame')??'0',playing=attr(child,'playing')??'true';if(!/^\d+$/.test(frame)||Number(frame)>2147483647||!['true','false'].includes(playing))throw new Error('invalid movieclip settings');result.frame=Number(frame);result.playing=playing==='true';}
+        if(['image','movieclip','loader'].includes(type)&&child.hasAttribute('color')) {const color=attr(child,'color');if(!/^#[0-9a-f]{6}$/i.test(color))throw new Error('invalid image color');result.imageColor=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16)).concat(255);}
+        if(['image','loader'].includes(type)) {const flip=['none','hz','vt','both'].indexOf(attr(child,'flip')??'none'),fill=['none','hz','vt','radial90','radial180','radial360'].indexOf(attr(child,'fillMethod')??'none'),clockwise=attr(child,'fillClockwise')??'true',amount=attr(child,'fillAmount')??'100';
+          if(flip<0||fill<0||!['true','false'].includes(clockwise)||!amount.trim()||!Number.isFinite(Number(amount))||Number(amount)<0||Number(amount)>100||(!fill&&(child.hasAttribute('fillClockwise')||child.hasAttribute('fillAmount'))))throw new Error('invalid image fill or flip');
+          Object.assign(result,{flip,fillMethod:fill,fillClockwise:clockwise==='true',fillAmount:Number(amount)/100});
+        }
+        if(type==='loader') {result.url=attr(child,'url')||null;if(result.url?.startsWith('ui://'))requireLocalUrl(result.url,['image','component','movieclip']);
+          for(const [key,values] of [['align',['left','center','right']],['vAlign',['top','middle','bottom']],['fill',['none','scale','scaleMatchHeight','scaleMatchWidth','scaleFree','scaleNoBorder']]]) {result[key]=values.indexOf(attr(child,key)??values[0]);if(result[key]<0)throw new Error(`invalid loader ${key}`);}
+        }
+        if(type==='list') {
+          const settings={},tree=attr(child,'treeView')??'false';if(!['true','false'].includes(tree))throw new Error('invalid treeView flag');
+          if(tree==='true'){result.type='tree';for(const [key,def,max] of [['indent',15,100000],['clickToExpand',0,2]]){const v=attr(child,key)??String(def);if(!/^\d+$/.test(v)||Number(v)>max)throw new Error(`invalid tree ${key}`);settings[key]=Number(v);}}
+          else if(child.hasAttribute('indent')||child.hasAttribute('clickToExpand'))throw new Error('tree settings require treeView');
+          for(const [key,values] of [['layout',['column','row','flow_hz','flow_vt','pagination']],['selectionMode',['single','multiple','multipleSingleClick','none']],['align',['left','center','right']],['vAlign',['top','middle','bottom']],['overflow',['visible','hidden','scroll']]]){settings[key]=values.indexOf(attr(child,key)??values[0]);if(settings[key]<0)throw new Error(`invalid list ${key}`);}
+          for(const key of ['lineGap','colGap','lineCount','colCount']){const v=attr(child,key)??'0';if(!/^[+-]?\d+$/.test(v)||Number(v)<(key.endsWith('Count')?0:-32768)||Number(v)>32767)throw new Error(`invalid list ${key}`);settings[key]=Number(v);}
+          const countKeys=['lineItemCount','lineItemCount2'],counts=countKeys.map(key=>{const value=attr(child,key)??'0';if(!/^\d+$/.test(value)||Number(value)>32767)throw new Error(`invalid list ${key}`);return Number(value);});
+          if(settings.lineCount||settings.colCount)warnings.push({resource:filename,setting:'list counts',message:'lineCount and colCount are ignored, matching the editor; use lineItemCount and lineItemCount2'});
+          settings.lineCount=settings.layout===3?counts[0]:settings.layout===4?counts[1]:0;
+          settings.colCount=settings.layout===2||settings.layout===4?counts[0]:0;
+          const booleanOption=(key,fallback)=>{const value=attr(child,key)??fallback;if(!['true','false'].includes(value))throw new Error(`invalid list ${key}`);return value==='true';};
+          settings.scrollItemToViewOnClick=booleanOption('scrollItemToViewOnClick','true');settings.foldInvisibleItems=booleanOption('foldInvisibleItems','false');const autoClearItems=booleanOption('autoClearItems','false');
+          settings.renderOrder=['ascent','descent','arch'].indexOf(attr(child,'renderOrder')??'ascent');if(settings.renderOrder<0)throw new Error('invalid list renderOrder');
+          const auto=attr(child,'autoItemSize')??(settings.layout<2?'true':'false');if(!['true','false'].includes(auto))throw new Error('invalid list autoItemSize');settings.autoItemSize=auto==='true';
+          for(const [key,count] of [['margin',4],['clipSoftness',2],['scrollBarMargin',4]])if(child.hasAttribute(key)){const values=attr(child,key).split(',');if(values.length!==count||values.some(v=>!/^\d+$/.test(v)||Number(v)>100000))throw new Error(`invalid list ${key}`);settings[key]=values.map(Number);}
+          for(const key of ['pageController','selectionController']){const name=attr(child,key);settings[key]=name?controllers.findIndex(c=>c.name===name):-1;if(name&&settings[key]<0)throw new Error(`invalid list ${key}`);}
+          if(settings.overflow===2){const directions=['horizontal','vertical','both'],displays=['default','visible','auto','hidden'],direction=directions.indexOf(attr(child,'scroll')??'vertical'),display=displays.indexOf(attr(child,'scrollBar')??'default'),flags=attr(child,'scrollBarFlags')??'0',resources=[];if(direction<0||display<0||!/^\d+$/.test(flags)||Number(flags)>2147483647)throw new Error('invalid list scroll');for(const key of ['scrollBarRes','ptrRes']){const values=(attr(child,key)??',').split(',');if(values.length!==2)throw new Error(`invalid ${key}`);for(const url of values){if(url)requireLocalUrl(url,['component']);resources.push(url||null);}}settings.scroll={type:direction,barDisplay:display,flags:Number(flags),barMargin:settings.scrollBarMargin,resources};}
+          else if(['scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','pageController'].some(k=>child.hasAttribute(k)))throw new Error('list scroll settings require scroll overflow');
+          settings.defaultItem=attr(child,'defaultItem')||null;if(settings.defaultItem)requireLocalUrl(settings.defaultItem,['component']);settings.items=[];
+          for(const item of autoClearItems?[]:children(child,'item')){const keys=['url','title','selectedTitle','icon','selectedIcon','name'];if(children(item).length||hasText(item)||Array.from(item.attributes).some(a=>!keys.includes(a.name)&&!(tree==='true'&&a.name==='level')))throw new Error('unsupported list item');const entry=Object.fromEntries(keys.map(k=>[k,attr(item,k)||null]));if(entry.url)requireLocalUrl(entry.url,['component']);for(const key of ['icon','selectedIcon'])if(entry[key])requireLocalUrl(entry[key],['image','component','movieclip']);if(tree==='true'){const level=attr(item,'level')??'0',previous=settings.items.at(-1)?.level??-1;if(!/^\d+$/.test(level)||Number(level)>255||Number(level)>previous+1)throw new Error('invalid tree level');entry.level=Number(level);}settings.items.push(entry);}
+          if(settings.items.length>32767)throw new Error('too many list items');if(tree==='true')settings.items.forEach((entry,i)=>entry.folder=i+1<settings.items.length&&settings.items[i+1].level>entry.level);result.list=settings;
+        }
+        if(type==='graph') {
+          const kind=attr(child,'type'),types=new Map([[null,0],['rect',1],['eclipse',2],['polygon',3],['regular_polygon',4]]);if(!types.has(kind))throw new Error('unsupported graph type');result.graphType=types.get(kind);
+          const line=attr(child,'lineSize')??'1';if(!/^\d+$/.test(line)||Number(line)>100000)throw new Error('invalid graph lineSize');result.lineSize=Number(line);
+          for(const [key,def] of [['lineColor','#ff000000'],['fillColor','#ffffffff']]) {const value=attr(child,key)??def;if(!/^#[0-9a-f]{8}$/i.test(value))throw new Error(`invalid graph ${key}`);result[key]=[3,5,7,1].map(i=>parseInt(value.slice(i,i+2),16));}
+          const floats=key=>{const values=(attr(child,key)??'').split(',');if(values.some(v=>!v.trim()||!Number.isFinite(Number(v))||Math.abs(Number(v))>1000000))throw new Error(`invalid graph ${key}`);return values.map(Number);};
+          if(child.hasAttribute('corner')) {if(kind!=='rect')throw new Error('graph corner requires rectangle');const radius=floats('corner');if(![1,4].includes(radius.length)||radius.some(v=>v<0))throw new Error('invalid graph corner');result.cornerRadius=radius.length===1?Array(4).fill(radius[0]):radius;}
+          if(kind==='polygon'){result.points=floats('points');if(result.points.length<6||result.points.length%2||result.points.length>32766)throw new Error('invalid polygon points');}else if(child.hasAttribute('points'))throw new Error('points require polygon');
+          if(kind==='regular_polygon'){const sides=attr(child,'sides')??'0',angle=attr(child,'startAngle')??'0';if(!/^\d+$/.test(sides)||Number(sides)<3||Number(sides)>32767||!angle.trim()||!Number.isFinite(Number(angle))||Math.abs(Number(angle))>1000000)throw new Error('invalid regular polygon');result.sides=Number(sides);result.startAngle=Number(angle);result.distances=child.hasAttribute('distances')?floats('distances'):[];if(result.distances.length&&(result.distances.length!==result.sides||result.distances.some(v=>v<0)))throw new Error('invalid polygon distances');}
+          else if(['sides','startAngle','distances'].some(key=>child.hasAttribute(key)))throw new Error('regular polygon settings on wrong graph type');
+        }
+        if(isText) {
+          result.text=attr(child,'text')||null;result.font=attr(child,'font')||null;
+          if(result.font?.startsWith('ui://'))requireLocalUrl(result.font,['font']);
+          if(type==='richtext'){const texts=[result.text,...result.gears.filter(g=>g.type==='text').flatMap(g=>[...g.values,g.default])];for(const value of texts)if(value)for(const url of richTextUrls(value,attr(child,'ubb')==='true'))requireLocalUrl(url,['image','component','movieclip']);}
+          const integer=(key,def,min,max)=>{const value=attr(child,key)??String(def);if(!/^[+-]?\d+$/.test(value)||Number(value)<min||Number(value)>max)throw new Error(`invalid text ${key}`);return Number(value);};
+          result.fontSize=integer('fontSize',0,0,32767);result.leading=integer('leading',3,-32768,32767);result.letterSpacing=integer('letterSpacing',0,-32768,32767);
+          const color=(value,key)=>{if(!/^#[0-9a-f]{6}$/i.test(value))throw new Error(`invalid text ${key}`);return [1,3,5].map(i=>parseInt(value.slice(i,i+2),16)).concat(255);};
+          result.color=color(attr(child,'color')??'#000000','color');
+          for(const key of ['strokeColor','shadowColor'])if(child.hasAttribute(key))result[key]=color(attr(child,key),key);
+          if(child.hasAttribute('shadowColor')!==child.hasAttribute('shadowOffset'))throw new Error('invalid text shadow');
+          if(result.shadowColor){const offset=attr(child,'shadowOffset').split(',');if(offset.length!==2||offset.some(v=>!v.trim()||!Number.isFinite(Number(v))||Math.abs(Number(v))>100000))throw new Error('invalid text shadow');result.shadowOffset=offset.map(Number);}
+          for(const [key,values,def] of [['align',['left','center','right'],0],['vAlign',['top','middle','bottom'],0],['autoSize',['none','both','height','shrink'],1]]) {const value=attr(child,key);result[key]=value===null?def:values.indexOf(value);if(result[key]<0)throw new Error(`invalid text ${key}`);}
+          for(const key of ['underline','italic','bold','singleLine','ubb']) {const value=attr(child,key);if(value!==null&&!['true','false'].includes(value))throw new Error(`invalid text ${key}`);result[key]=value==='true';}
+          if(type==='inputtext') {const password=attr(child,'password')??'false';if(!['true','false'].includes(password))throw new Error('invalid input password');result.input={prompt:attr(child,'prompt'),restrict:attr(child,'restrict'),maxLength:integer('maxLength',0,0,2147483647),keyboardType:integer('keyboardType',0,0,2147483647),password:password==='true'};}
+        }
+        componentChildren.push(result);
+      }
+      components.push({id:itemId,name:path.parse(filename).name,path:attr(item,'path')||'/',xml:bytes,width:Number(dimensions[0]),height:Number(dimensions[1]),exported:exported==='true',...componentOptions,controllers,relations:rootRelations,children:componentChildren});continue;
+    }
+    if(item.tagName==='font') {
+      if(Array.from(item.attributes).some(a=>!['id','name','path','exported','texture'].includes(a.name)) || path.extname(filename).toLowerCase()!=='.fnt')throw new Error('unsupported font settings or format');
+      const exported=attr(item,'exported');if(exported && !['true','false'].includes(exported))throw new Error('invalid exported attribute');
+      const font=readBitmapFont(bytes,attr(item,'texture'));fonts.push({...font,id:itemId,name:path.parse(filename).name,exported:exported==='true'});continue;
+    }
+    if(item.tagName==='movieclip') {
+      if(Array.from(item.attributes).some(a=>!['id','name','path','exported'].includes(a.name)) || path.extname(filename).toLowerCase()!=='.jta')throw new Error('unsupported movieclip settings or format');
+      const exported=attr(item,'exported');if(exported && !['true','false'].includes(exported))throw new Error('invalid exported attribute');
+      const clip=await readJta(bytes), frames=clip.frames.map((frame,index)=>{
+        const id=`${itemId}_${index}`;if(registeredIds.has(id) || sources[id])throw new Error('movieclip sprite id collision');
+        const image=clip.images[frame.imageIndex];sources[id]=image;
+        return {id,width:image.width,height:image.height,rect:frame.rect,delay:frame.delay};
+      });
+      movieclips.push({id:itemId,name:path.parse(filename).name,width:clip.width,height:clip.height,interval:clip.interval,frames,exported:exported==='true'});continue;
+    }
+    if(item.tagName==='sound') {
+      if(!/^[A-Za-z0-9_-]+$/.test(itemId) || Array.from(item.attributes).some(a=>!['id','name','path','exported'].includes(a.name))) throw new Error('unsupported sound settings or invalid id');
+      const extension=path.extname(filename).toLowerCase();if(xmlFormat&&extension!=='.wav')throw new Error('XML publication currently supports WAV sounds only');
+      if(extension==='.wav')inspectWav(bytes);else if(extension==='.mp3')inspectMp3(bytes);else if(extension==='.ogg')inspectOggVorbis(bytes);else throw new Error('unsupported sound format');
+      const exported=attr(item,'exported');if(exported && !['true','false'].includes(exported))throw new Error('invalid exported attribute');
+      sounds.push({id:itemId,name:path.parse(filename).name,path:attr(item,'path')||'/',file:itemId+extension,exported:exported==='true',bytes});continue;
+    }
+    if(item.hasAttribute('texture'))throw new Error('unsupported image texture setting');
+    const source=await decodeImage(bytes);sources[itemId]=source;
+    const exported=attr(item,'exported'), dup=attr(item,'duplicatePadding');
+    if(exported && !['true','false'].includes(exported) || dup && !['true','false'].includes(dup)) throw new Error('invalid image boolean setting');
+    if(dup==='true') duplicate.push(itemId);
+    const image={id:itemId,name:path.parse(filename).name,path:attr(item,'path')||'/',width:source.width,height:source.height,exported:exported==='true'}, scale=attr(item,'scale'), grid=attr(item,'scale9grid');
+    if(scale==='9grid') {const values=(grid||'').split(',');if(values.length!==4 || values.some(x=>!/^\d+$/.test(x) || Number(x)>2147483647) || Number(values[2])===0 || Number(values[3])===0) throw new Error('invalid scale9grid');image.scale9grid=values.map(Number);if(image.scale9grid[0]+image.scale9grid[2]>source.width||image.scale9grid[1]+image.scale9grid[3]>source.height)warnings.push({resource:itemId,setting:'scale9grid',message:'scale9grid extends beyond image dimensions; preserved to match editor publication'});}
+    else if(scale==='tile' && grid===null) image.scaleByTile=true;
+    else if((scale && scale!=='') || grid!==null) throw new Error('unsupported scale setting');
+    images.push(image);
+  }
+  const lookup={image:new Set(images.map(i=>i.id)),movieclip:new Set(movieclips.map(i=>i.id)),component:new Set(components.map(i=>i.id))};
+  for(const component of components)for(const child of component.children)if(!child.pkg&&lookup[child.type]&&!lookup[child.type].has(child.src))throw new Error(`component ${child.type} ${child.src} is missing`);
+  const byId=new Map(components.map(c=>[c.id,c])),state=new Map();
+  for(const component of components)for(const child of component.children)if(child.type==='component'&&(child.label||child.button||child.comboBox||child.progress)) {const expected=child.label?11:child.button?12:child.comboBox?13:child.progressKind;let actual=byId.get(child.src)?.extension;if(child.pkg){const pkg=packageList.find(p=>attr(p.tree,'id')===child.pkg),resource=resources(pkg.tree).find(i=>i.tagName==='component'&&attr(i,'id')===child.src),external=parse(await tracked(componentPath(pkg.folder,resource)),'external component');actual={Label:11,Button:12,ComboBox:13,ProgressBar:14,Slider:15,ScrollBar:16}[attr(external,'extention')]??0;}if(actual!==expected)throw new Error('component instance references the wrong extension type');}
+  for(const component of components) {
+    if(state.get(component.id)===2)continue;
+    const stack=[[component.id,false]];
+    while(stack.length) {const [id,done]=stack.pop();if(done){state.set(id,2);continue;}if(state.get(id)===1)throw new Error('cyclic component references are unsupported');if(state.get(id)===2)continue;state.set(id,1);stack.push([id,true]);for(const child of byId.get(id).children)if(child.type==='component'&&!child.pkg)stack.push([child.src,false]);}
+  }
+  for(const file of externalFiles)if(!snapshot.some(([f])=>f===file))await tracked(file);
+  const hitTests=[...new Set(components.map(c=>c.settings.hitTestImage).filter(Boolean))].sort().map(id=>{if(!sources[id])throw new Error(`pixel hit test image missing: ${id}`);return {id,...makePixelMask(sources[id])};});
+  const fontImages=new Set(),fontTextures=new Set(),fontGroups=[];
+  for(const font of fonts) {
+    const required=font.ttf?[font.texture]:font.glyphs.map(g=>g.image);
+    for(const id of required) {if(!images.some(image=>image.id===id))throw new Error(`font image ${id} is missing`);fontImages.add(id);}
+    fontGroups.push(required);
+    if(font.ttf) {fontTextures.add(font.texture);const source=sources[font.texture];if(font.glyphs.some(g=>g.x+g.width>source.width || g.y+g.height>source.height))throw new Error('font glyph rectangle exceeds texture dimensions');}
+  }
+  const rotatable=rotate ? images.filter(i=>!i.scale9grid && !i.scaleByTile && !fontImages.has(i.id)).map(i=>i.id) : [];
+  const spriteTrim={}, layoutImages=images.map(image=>{
+    if(!trim || image.scale9grid || image.scaleByTile || fontTextures.has(image.id)) return image;
+    const source=sources[image.id]; let left=image.width,top=image.height,right=0,bottom=0;
+    for(let y=0;y<image.height;y++) for(let x=0;x<image.width;x++) if(source.pixels[(y*image.width+x)*4+3]) {left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x+1);bottom=Math.max(bottom,y+1);}
+    if(right===0 || bottom===0) {left=0;top=0;right=1;bottom=1;}
+    if(left===0 && top===0 && right===image.width && bottom===image.height) return image;
+    const w=right-left,h=bottom-top,pixels=Buffer.alloc(w*h*4);
+    for(let y=0;y<h;y++) source.pixels.copy(pixels,y*w*4,((top+y)*image.width+left)*4,((top+y)*image.width+right)*4);
+    sources[image.id]={width:w,height:h,pixels};spriteTrim[image.id]=[left,top,image.width,image.height];
+    return {...image,width:w,height:h};
+  });
+  const frames=movieclips.flatMap(clip=>clip.frames), groups=[...movieclips.map(clip=>clip.frames.map(frame=>frame.id)),...fontGroups];
+  let pages=plan([...layoutImages,...frames],{width,height,padding,shrink,optimize,rotatable});
+  const framePages=new Map(pages.flatMap((page,index)=>page.items.map(item=>[item.id,index])));
+  if(groups.some(group=>new Set(group.map(id=>framePages.get(id))).size>1)) pages=planGrouped([...layoutImages,...frames],groups,{width,height,padding,shrink:shrink||optimize,rotatable});
+  if(atlas.forceSquare) for(const page of pages) {const side=Math.max(page.width,page.height);if(side>Math.min(width,height)) throw new Error('square atlas exceeds configured dimensions');page.width=page.height=side;}
+  if(atlas.paging===false && pages.length>1) throw new Error('project atlas paging is disabled');
+  if(atlas.sizeOption==='pot' && pages.some(p=>!Number.isInteger(Math.log2(p.width)) || !Number.isInteger(Math.log2(p.height)))) throw new Error('project requires power-of-two atlas dimensions');
+  if(duplicate.length && !padding) throw new Error('duplicatePadding requires positive atlas padding');
+  const blob=encodeImagePackage(id,path.basename(folder),images,pages,{spriteTrim,sounds,movieclips,fonts,components,hitTests,dependencies:[...dependencies.values()].sort((a,b)=>a.id.localeCompare(b.id))}), canvases=render(pages,sources,{duplicatePadding:duplicate,padding});
+  const inspected=inspectImagePackage(blob), decodedImages=inspected.items.filter(i=>i.type===0), decodedAtlases=inspected.items.filter(i=>i.type===4), decodedById=new Map(inspected.items.map(item=>[item.id,item])), spritesById=new Map(inspected.sprites.map(sprite=>[sprite.id,sprite]));
+  if(inspected.id!==id || decodedImages.length!==images.length || decodedAtlases.length!==pages.length || inspected.sprites.length!==images.length+frames.length+fonts.filter(f=>f.ttf).length || inspected.items.filter(i=>i.type===2).length!==sounds.length || inspected.items.filter(i=>i.type===1).length!==movieclips.length || inspected.items.filter(i=>i.type===5).length!==fonts.length) throw new Error('generated package validation failed');
+  for(const image of images) {
+    const item=decodedById.get(image.id), sprite=spritesById.get(image.id);
+    if(!item || !sprite || item.width!==image.width || item.height!==image.height || item.name!==image.name) throw new Error(`generated package image mismatch: ${image.id}`);
+    const atlas=decodedById.get(sprite.atlas), w=sprite.rotated?sprite.height:sprite.width, h=sprite.rotated?sprite.width:sprite.height;
+    if(!atlas || sprite.x<0 || sprite.y<0 || sprite.x+w>atlas.width || sprite.y+h>atlas.height) throw new Error(`generated sprite bounds invalid: ${image.id}`);
+  }
+  for(const clip of movieclips) {
+    const item=decodedById.get(clip.id);
+    if(!item || item.movieclip.interval!==clip.interval || item.movieclip.frames.length!==clip.frames.length || item.movieclip.frames.some((frame,index)=>frame.sprite!==clip.frames[index].id || frame.delay!==clip.frames[index].delay || frame.rect.some((n,i)=>n!==clip.frames[index].rect[i]))) throw new Error(`generated movieclip mismatch: ${clip.id}`);
+  }
+  for(const font of fonts) {
+    const item=decodedById.get(font.id);
+    if(!item || item.font.fontSize!==font.fontSize || item.font.lineHeight!==font.lineHeight || JSON.stringify(item.font.glyphs)!==JSON.stringify(font.glyphs))throw new Error(`generated font mismatch: ${font.id}`);
+  }
+  for(const component of components) {const item=decodedById.get(component.id);if(!item || item.name!==component.name || item.component.width!==component.width || item.component.height!==component.height || item.component.childCount!==component.children.length)throw new Error(`generated component mismatch: ${component.id}`);}
+  const stage=await fs.mkdtemp(path.join(parent,'.fgui-publish-'));let moved=false;
+  try {
+    for(const [index,canvas] of canvases.entries()) {
+      const png=await encodePng(canvas), decoded=await decodeImage(png);
+      if(decoded.width!==canvas.width || decoded.height!==canvas.height || !decoded.pixels.equals(canvas.pixels)) throw new Error(`generated atlas ${index} failed pixel validation`);
+      await fs.writeFile(path.join(stage,`${name}${xmlFormat?'@':'_'}atlas${index}.png`),png);
+    }
+    const fileName=`${name}.${extension}`;
+    if(xmlFormat){const xml=encodeXmlImagePackage(id,path.basename(folder),images,pages,spriteTrim,components,sounds);await fs.writeFile(path.join(stage,fileName),xml.blob);await fs.writeFile(path.join(stage,`${name}@sprites.bytes`),xml.sprites);for(const sound of sounds)await fs.writeFile(path.join(stage,`${name}@${sound.file}`),sound.bytes);const report=await validatePublished({project:root,file:path.join(stage,fileName),compare_source:true,exported_only:Boolean(args.exported_only),check_overlaps:true});if(!report.valid)throw new Error(`generated XML package validation failed: ${JSON.stringify(report.issues)}`);}
+    else await fs.writeFile(path.join(stage,fileName),blob);
+    if(!xmlFormat)for(const sound of sounds) await fs.writeFile(path.join(stage,`${name}_${sound.file}`),sound.bytes);
+    for(const [file,expected] of snapshot) {let actual=null;try {actual=hash(await fs.readFile(file));} catch(e) {if(e.code!=='ENOENT') throw e;}if(actual!==expected) throw new Error(`publication source changed: ${file}`);}
+    if(JSON.stringify(packages(root).map(p=>p.folder))!==JSON.stringify(packageFolders))throw new Error('project packages changed during publication');
+    if(descriptorNames&&(await fs.stat(await fs.realpath(args.project))).isDirectory()&&JSON.stringify((await fs.readdir(root)).filter(n=>isFairyDescriptorName(n)).sort())!==JSON.stringify(descriptorNames))throw new Error('project descriptors changed during publication');
+    try {await fs.lstat(output);throw new Error('output directory must not already exist');} catch(e) {if(e.code!=='ENOENT') throw e;}
+    await fs.rename(stage,output);moved=true;
+    return {output,file:path.join(output,fileName),images:images.length,sounds:sounds.length,movieclips:movieclips.length,fonts:fonts.length,components:components.length,pages:pages.length,trimmed_images:Object.keys(spriteTrim).length,warnings,dependencies:[...dependencies.values()].sort((a,b)=>a.id.localeCompare(b.id)),experimental:true,scope:xmlFormat?'XML images, WAV sounds and simple components with image, text and graph children; other resources and component features are rejected':allowComponents?'basic components and media; unsupported resource types and settings are rejected':allowSounds?'image, sound, JTA movieclip and bitmap font package; unsupported resource types and settings are rejected':'image-only package; unsupported resource types and settings are rejected'};
+  } finally {if(!moved) await fs.rm(stage,{recursive:true,force:true});}
+}
