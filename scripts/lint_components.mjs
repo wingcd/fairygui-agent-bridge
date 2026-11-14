@@ -185,6 +185,13 @@ const walkXml = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((d
 // 编辑器读取对象坐标和尺寸时使用 Int32.Parse；扫描整个 assets，包含 windows 等非 components 目录。
 for (const file of walkXml(assetsDir)) {
   const src = fs.readFileSync(file, 'utf8');
+  for (const dl of src.matchAll(/<displayList\b[^>]*>([\s\S]*?)<\/displayList>/g)) {
+    if (/<controller\b/.test(dl[1])) {
+      const line = src.slice(0, dl.index).split('\n').length;
+      console.log(`✗ ${path.relative(root, file)}:${line} controller 不能放在 displayList 内，应放在组件根节点下`);
+      problems++;
+    }
+  }
   for (const tag of src.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)((?:[^>"']|"[^"]*"|'[^']*')*)>/g)) {
     if (!OBJ_TAGS.has(tag[1])) continue;
     for (const attr of tag[2].matchAll(/\s(xy|size)\s*=\s*(["'])(.*?)\2/g)) {

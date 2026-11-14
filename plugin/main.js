@@ -352,7 +352,7 @@ COMMANDS.insert_object = function (a) {
     }
     var pos = null;
     if (a.x !== undefined && a.y !== undefined) {
-        pos = new CS.UnityEngine.Vector2(a.x + 0.0, a.y + 0.0);
+        pos = new CS.UnityEngine.Vector2(geometryInteger(a.x), geometryInteger(a.y));
     }
     var obj;
     if (a.index === undefined) {
@@ -432,7 +432,20 @@ function findChild(content, target) {
     return content.GetChild(target);
 }
 
+function geometryInteger(v) {
+    var n = Number(v);
+    if (v === null || v === "" || !isFinite(n) || Math.round(n) < -2147483648 || Math.round(n) > 2147483647)
+        throw "geometry value must be a finite Int32 number: " + v;
+    return Math.round(n);
+}
+
 function setOneProp(obj, k, v) {
+    if (k === "x" || k === "y" || k === "width" || k === "height") v = geometryInteger(v);
+    if (k === "xy" || k === "size") {
+        var coordinates = String(v).split(",");
+        if (coordinates.length !== 2) throw k + " requires two numbers";
+        v = geometryInteger(coordinates[0]) + "," + geometryInteger(coordinates[1]);
+    }
     try {
         obj.docElement.SetProperty(k, v);
         return "set";
