@@ -343,9 +343,9 @@ JTA movieclip frames are packed into preview atlases and can be played or select
 Static grayed objects use the PIXI runtime's grayscale filter.
 Bitmap fonts backed by individual image glyphs or a single texture are supported
 for the tested glyph and tint settings.
-Automatic linear rotation transitions and pull-to-refresh header/footer resources
-are supported for the shapes exercised by the preview tests; other autoplay
-transitions remain unsupported.
+Single-item automatic linear rotation, position and opacity transitions, and
+pull-to-refresh header/footer resources, are supported for the shapes exercised
+by the preview tests; other autoplay transitions remain unsupported.
 Tree previews initialize the expanded nodes, indentation, leaf controllers and
 icons; interactive tree expansion is not implemented in this screenshot viewer.
 Lists also support an explicitly supplied vertical scrollbar in automatic
