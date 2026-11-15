@@ -339,6 +339,16 @@ ScrollPane, VirtualList, Transition, Chat, Bag, Guide, Cooldown, PullToRefresh a
 TreeView. All 16 sample `Main` components now have initial screenshot checks.
 These checks establish that initial content renders, not pixel parity with the
 editor or full support for every component in each sample.
+To rerun the sample rendering checks on Windows from this directory:
+
+```powershell
+$env:FGUI_SAMPLE_PROJECT = 'E:\game_dev\FairyGUI-cocoscreator\demo\UIProject'
+$env:FGUI_CHROME = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+node --test --test-name-pattern='PIXI renders.*(sample|initial state)' pixi-screenshot.test.mjs
+```
+
+Adjust the project and browser paths for your installation. These checks include
+all 16 sample Main components and selected additional sample components.
 Input text is rendered in its unfocused state, including password masking,
 plain-text prompts and the tested color-marked prompt forms; other styled input
 prompts are not yet supported.
