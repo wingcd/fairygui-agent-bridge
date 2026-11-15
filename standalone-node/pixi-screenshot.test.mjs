@@ -654,3 +654,16 @@ test('PIXI screenshot selects root controller pages without modifying the projec
   for(const pages of [{missing:'a'},{state:'missing'}]){const result=await call(pages);assert.equal(result.result.isError,true);assert.match(result.result.content[0].text,/controller.*not found/);}
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI screenshot selects nested instance controller pages',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-nested-controller-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/><component id="child" name="Child.xml" path="/"/></resources><publish name="Demo"/></packageDescription>');
+  const main='<component size="70,30"><displayList><component id="left" src="child" xy="0,0"/><component id="right" src="child" xy="40,0"/></displayList></component>',child='<component size="30,30"><controller name="state" pages="a,A,b,B" selected="0"/><displayList><graph id="red" xy="0,0" size="30,30" type="rect" lineSize="0" fillColor="#ffff0000"><gearDisplay controller="state" pages="a"/></graph><graph id="green" xy="0,0" size="30,30" type="rect" lineSize="0" fillColor="#ff00ff00"><gearDisplay controller="state" pages="b"/></graph></displayList></component>';
+  await fs.writeFile(path.join(dir,'Main.xml'),main);await fs.writeFile(path.join(dir,'Child.xml'),child);
+  const invoke=overrides=>message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:70,height:30,settle_ms:0,reuse_screenshot:true,controller_overrides:overrides}}});
+  const chosen=[{path:['right'],controller:'state',page:'b'}],result=await invoke(chosen);assert.equal(result.result.isError,false,result.result.content[0].text);const pixels=await sharp(Buffer.from(result.result.content[1].data,'base64')).removeAlpha().raw().toBuffer(),pixel=x=>[...pixels.subarray((15*70+x)*3,(15*70+x)*3+3)];assert.deepEqual(pixel(15),[255,0,0]);assert.deepEqual(pixel(55),[0,255,0]);
+  const cached=await invoke(chosen);assert.equal(JSON.parse(cached.result.content[0].text).data.cached,true);for(const overrides of [[{path:['missing'],controller:'state',page:'b'}],[{path:['right','red'],controller:'state',page:'b'}],[{path:['right'],controller:'state',page:'b'},{path:['right'],controller:'state',page:'b'}]]){const invalid=await invoke(overrides);assert.equal(invalid.result.isError,true,invalid.result.content[0].text);assert.match(invalid.result.content[0].text,/controller|duplicate/i);}
+  assert.equal(await fs.readFile(path.join(dir,'Main.xml'),'utf8'),main);assert.equal(await fs.readFile(path.join(dir,'Child.xml'),'utf8'),child);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
