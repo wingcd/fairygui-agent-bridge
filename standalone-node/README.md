@@ -211,6 +211,10 @@ pixels, and validates editor output against the project source. It does not test
 interactive behavior or final rendering. Set `FGUI_EDITOR_PACKAGES` to a
 comma-separated package list to run a subset.
 
+The optional `python standalone-node/test_editor_unicode_roundtrip.py PROJECT EDITOR_EXE`
+uses a temporary copy to verify that Node-authored Unicode separators survive an
+editor open and localization export.
+
 For a real editor cross-package authoring and publication comparison, run
 `python standalone-node/test_editor_cross_package.py PROJECT EDITOR_EXE`.
 It also checks cross-package MovieClip, loader, ComboBox, ProgressBar and Slider properties
