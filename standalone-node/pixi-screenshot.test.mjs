@@ -573,3 +573,18 @@ test('PIXI concurrent previews remain isolated by project',{skip:!process.env.FG
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-multiple-projects-'));
  try{const projects=[];for(const [name,color] of [['red','#ffff0000'],['green','#ff00ff00']]){const project=path.join(root,name),dir=path.join(project,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(project,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');await fs.writeFile(path.join(dir,'Main.xml'),`<component size="40,40"><displayList><graph id="g" xy="0,0" size="20,20" type="rect" lineSize="0" fillColor="${color}"/></displayList></component>`);projects.push(project);}const responses=await Promise.all(projects.map(project=>message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project,pkg:'Demo',name:'Main',renderer:'pixi',width:40,height:40,settle_ms:0,reuse_screenshot:true}}})));for(const response of responses)assert.equal(response.result.isError,false,response.result.content[0].text);const colors=[];for(const response of responses){const raw=await sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();colors.push([...raw.subarray((10*40+10)*3,(10*40+10)*3+3)]);}assert.deepEqual(colors,[[255,0,0],[0,255,0]]);}finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI wraps spaces without inserting an empty line',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-ubb-spaces-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});
+  await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');
+  await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');
+  await fs.writeFile(path.join(dir,'Main.xml'),'<component size="100,100"><displayList><richtext id="t" xy="0,0" size="65,100" font="Courier New" fontSize="20" autoSize="none" ubb="true" text="[color=#ff0000]HELLO HELLO[/color]"/></displayList></component>');
+  const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:100,height:100,settle_ms:0}}});
+  assert.equal(response.result.isError,false,response.result.content[0].text);
+  const {data,info}=await sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer({resolveWithObject:true});
+  const rows=[];for(let y=0;y<100;y++){let red=0;for(let x=0;x<65;x++){const i=(y*info.width+x)*3;if(data[i]>150&&data[i+1]<80&&data[i+2]<80)red++;}if(red)rows.push(y);}
+  assert.ok(rows.some(y=>y<25),'first line is visible');assert.ok(rows.some(y=>y>=25&&y<45),'second line immediately follows first');assert.ok(!rows.some(y=>y>=48),'no unwanted extra line');
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
