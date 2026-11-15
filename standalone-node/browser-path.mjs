@@ -4,6 +4,7 @@ import os from 'node:os';
 
 // Explicit arguments and environment configuration always take precedence.
 export async function resolveChrome(explicit) {
+ if(explicit!==undefined&&explicit!==null&&(typeof explicit!=='string'||!explicit.trim()))throw new Error('chrome must be a nonempty browser executable path');
  const configured=explicit??process.env.FGUI_CHROME;
  if(configured)return configured;
  const candidates=process.platform==='win32'?

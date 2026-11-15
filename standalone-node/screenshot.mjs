@@ -20,7 +20,7 @@ export const screenshotBytes = Symbol('screenshotBytes');
 // The preview runs the real Cocos runtime in a disposable copy of the supplied demo.
 export async function screenshot(args) {
   args={renderer:'pixi',...args};
-  for (const [key,env] of Object.entries({demo:'FGUI_COCOS_DEMO',distribution:'FGUI_COCOS_DISTRIBUTION',creator:'FGUI_COCOS_CREATOR',chrome:'FGUI_CHROME'})) args[key] ??= process.env[env];
+  for (const [key,env] of Object.entries({demo:'FGUI_COCOS_DEMO',distribution:'FGUI_COCOS_DISTRIBUTION',creator:'FGUI_COCOS_CREATOR',chrome:'FGUI_CHROME'})) args[key] ??= process.env[env] || undefined;
   if(args.renderer!==undefined&&!['cocos','pixi'].includes(args.renderer))throw new Error('invalid renderer');
   if(args.renderer==='pixi'){
     args.chrome=await resolveChrome(args.chrome);
