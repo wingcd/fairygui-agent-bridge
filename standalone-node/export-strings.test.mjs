@@ -51,3 +51,9 @@ test('strings export includes component text gears, Label prompts and ComboBox t
   const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'export_strings',arguments:{project:root}}});assert.equal(response.result.isError,false,response.result.content[0].text);const result=entries(JSON.parse(response.result.content[0].text).data.xml),expected={button:'Button title','button-0':'Selected title','button-texts_0':'First','button-texts_2':'Third','button-texts_def':'Default gear',label:'Label title','label-prompt':'Label prompt',combo:'Combo title','combo-0':'Option A','combo-1':'Option B'};assert.deepEqual(result,Object.fromEntries(Object.entries(expected).map(([key,value])=>['abcdefghcomp-'+key,value])));assert.deepEqual(Object.keys(result),Object.keys(expected).map(key=>'abcdefghcomp-'+key));
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+
+test('strings export retains Unicode line and paragraph separators',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-strings-separators-'));
+ try{const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="comp" name="Main.xml" path="/"/></resources></packageDescription>');await fs.writeFile(path.join(dir,'Main.xml'),'<component><displayList><text id="t" xy="0,0" text="A\u0085B\u2028C\u2029D"/></displayList></component>');const result=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'export_strings',arguments:{project:root}}});assert.equal(result.result.isError,false,result.result.content[0].text);assert.equal(entries(JSON.parse(result.result.content[0].text).data.xml)['abcdefghcomp-t'],'A\u0085B\u2028C\u2029D');}finally{await fs.rm(root,{recursive:true,force:true});}
+});

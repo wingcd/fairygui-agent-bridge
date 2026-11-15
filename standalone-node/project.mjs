@@ -18,7 +18,12 @@ export function parse(data, label) {
   const xml = decodeXml(data, label);
   if (/<!\s*(DOCTYPE|ENTITY)\b/i.test(xml)) throw new Error(`${label}: DTD/entity declarations are not supported`);
   const errors = [];
-  const doc = new DOMParser({ onError: (level, message) => errors.push(`${level}: ${message}`) }).parseFromString(xml, 'application/xml');
+  // FairyGUI files use XML 1.0: NEL, line separator and paragraph separator
+  // are content, whereas xmldom's default normalization also rewrites them.
+  const xml11=/^\s*<\?xml\s+[^?]*\bversion\s*=\s*['"]1\.1['"]/i.test(xml);
+  const options={onError:(level,message)=>errors.push(`${level}: ${message}`)};
+  if(!xml11)options.normalizeLineEndings=input=>input.replace(/\r\n?/g,'\n');
+  const doc = new DOMParser(options).parseFromString(xml, 'application/xml');
   if (errors.length || !doc.documentElement) throw new Error(`${label}: invalid XML: ${errors.join('; ')}`);
   return doc.documentElement;
 }

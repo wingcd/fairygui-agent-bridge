@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execute } from './project.mjs';
+import { execute,parse } from './project.mjs';
 import {DOMParser} from '@xmldom/xmldom';
 import { writeComponent, setPropertiesBatch, setComponentProperties, editController, editObject, createComponent, setImageOptions, importResource, unregisterResource } from './write.mjs';
 import sharp from 'sharp';
@@ -138,4 +138,11 @@ test('project_info respects an explicitly selected descriptor',()=>{
 test('project_info resolves descriptor symbolic links',t=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-info-link-'));
  try{fs.mkdirSync(path.join(root,'assets'));const selected=path.join(root,'selected.fairy'),alias=path.join(root,'alias.fairy');fs.writeFileSync(selected,'<projectDescription type="CocosCreator"/>');try{fs.symlinkSync(selected,alias,'file');}catch(error){if(['EPERM','EACCES','ENOTSUP'].includes(error.code)){t.skip('file symbolic links unavailable');return;}throw error;}const info=execute('project_info',{project:alias});assert.equal(info.projects.length,1);assert.equal(info.projects[0].file,selected);}finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+
+test('XML 1.0 parsing preserves Unicode line and paragraph separators',()=>{
+ const source='<component><displayList><text id="t" xy="0,0" text="A\u0085B\u2028C\u2029D"/></displayList></component>',node=parse(Buffer.from(source),'component');
+ assert.equal(node.getElementsByTagName('text')[0].getAttribute('text'),'A\u0085B\u2028C\u2029D');
+ const xml11=parse(Buffer.from('<?xml version="1.1"?><text value="A\u2028B"/>'),'xml11');assert.equal(xml11.getAttribute('value'),'A B');
 });
