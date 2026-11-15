@@ -17,8 +17,8 @@ export function installPreviewUbb(fgui, PIXI, parseUbb) {
   for(const run of runs){
    if(run.type==='image'){const obj=fgui.UIPackage.createObjectFromURL(run.url);if(!obj)throw Error('UBB image resource missing: '+run.url);add(obj.displayObject,obj.width,obj.height);continue;}
    const style=this.$style.clone();if(run.style.bold)style.fontWeight='bold';if(run.style.italic)style.fontStyle='italic';if(run.style.color)style.fill=run.style.color;if(run.style.size)style.fontSize=run.style.size;if(run.style.font)style.fontFamily=run.style.font;style.wordWrap=false;
-   for(const part of run.text.match(/\n|[^\S\n]+|[^\s]+/gu)||[]){if(part==='\n'){next();continue;}const measure=PIXI.TextMetrics.measureText(part,style).width;
-    const pieces=measure>limit&&Number.isFinite(limit)?Array.from(part):[part];
+   for(const part of run.text.match(/\n|[^\S\n]+|[^\s]+/gu)||[]){if(part==='\n'){next();continue;}const chunks=part.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]|[^\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu)||[];
+    const pieces=chunks.flatMap(chunk=>Number.isFinite(limit)&&PIXI.TextMetrics.measureText(chunk,style).width>limit?Array.from(chunk):[chunk]);
     for(const piece of pieces){const display=new PIXI.Text(piece,style);add(display,PIXI.TextMetrics.measureText(piece,style).width,display.height);if(run.style.underline){const stroke=new PIXI.Graphics();stroke.lineStyle(Math.max(1,Number(style.fontSize)/16),typeof style.fill==='string'?parseInt(style.fill.replace('#',''),16):style.fill);stroke.moveTo(0,display.height-2);stroke.lineTo(display.width,display.height-2);display.addChild(stroke);}}
    }
   }
