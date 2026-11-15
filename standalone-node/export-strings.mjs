@@ -21,13 +21,13 @@ export async function exportStrings(args){
     add(key+'-tips',attr(object,'tooltips'),label);
     if(['text','richtext'].includes(object.tagName)){
      add(key,attr(object,'text'),label);add(key+'-prompt',attr(object,'prompt'),label);
-     for(const gear of children(object,'gearText')){for(const [i,value] of (attr(gear,'values')??'').split('|').entries())add(key+'-texts_'+i,value,label);add(key+'-texts_def',attr(gear,'default'),label);}
     }
     if(object.tagName==='component'){
-     for(const kind of ['Button','Label'])for(const entry of children(object,kind)){add(key,attr(entry,'title'),label);add(key+'-0',attr(entry,'selectedTitle'),label);}
-     for(const combo of children(object,'ComboBox'))for(const [i,entry] of children(combo,'item').entries())add(key+'-'+i,attr(entry,'title'),label);
+     for(const kind of ['Button','Label'])for(const entry of children(object,kind)){add(key,attr(entry,'title'),label);add(key+'-0',attr(entry,'selectedTitle'),label);if(kind==='Label')add(key+'-prompt',attr(entry,'prompt'),label);}
+     for(const combo of children(object,'ComboBox')){add(key,attr(combo,'title'),label);for(const [i,entry] of children(combo,'item').entries())add(key+'-'+i,attr(entry,'title'),label);}
     }
     if(object.tagName==='list')for(const [i,entry] of children(object,'item').entries()){add(key+'-'+i,attr(entry,'title'),label);add(key+'-'+i+'-0',attr(entry,'selectedTitle'),label);}
+    if(['text','richtext','component'].includes(object.tagName))for(const gear of children(object,'gearText')){for(const [i,value] of (attr(gear,'values')??'').split('|').entries())add(key+'-texts_'+i,value,label);add(key+'-texts_def',attr(gear,'default'),label);}
    }
   }
  }
