@@ -65,7 +65,12 @@ export function referenceIssues(node, resourceIndex, currentPackage, urls = null
       else { const expected = {image:'image',component:'component',movieclip:'movieclip',jta:'movieclip'}[child.tagName],record=found.get(src);if(expected && record.type!==expected)issues.push(`child ${id}: ${child.tagName} requires ${expected} resource, got ${record.type}`);if(!record.isFile())issues.push(`child ${id}: referenced resource file is missing or invalid: ${src}`); }
     }
     if(child.tagName==='group'&&children(child).some(n=>['image','component','text','richtext','inputtext','graph','loader','list','group','movieclip','jta'].includes(n.tagName)))issues.push(`child ${id}: group cannot contain nested display objects; use sibling objects with a group reference`);
-    const group = attr(child,'group'); if (group && !groups.has(group)) issues.push(`child ${id}: unknown group ${group}`);
+    if(child.tagName==='group'){
+      const layout=attr(child,'layout');if(layout!==null&&!['none','hz','vt'].includes(layout))issues.push(`child ${id}: invalid group layout`);
+      for(const field of ['advanced','excludeInvisibles','autoSizeDisabled']){const value=attr(child,field);if(value!==null&&!['true','false'].includes(value))issues.push(`child ${id}: invalid group ${field}`);}
+      for(const field of ['lineGap','colGap','mainGridIndex']){const value=attr(child,field),min=field==='mainGridIndex'?-32768:-2147483648,max=field==='mainGridIndex'?32767:2147483647;if(value!==null&&(!/^[+-]?\d+$/.test(value)||Number(value)<min||Number(value)>max))issues.push(`child ${id}: invalid group ${field}`);}
+    }
+    const group = attr(child,'group'); if (group && child.tagName==='group') issues.push(`child ${id}: groups cannot belong to groups`); if (group && !groups.has(group)) issues.push(`child ${id}: unknown group ${group}`);
     if (['list','tree'].includes(child.tagName)) for (const field of ['pageController','selectionController']) { const c=attr(child,field); if(c && !controllers.has(c)) issues.push(`child ${id}: ${field} references unknown controller ${c}`); }
     for (const button of children(child,'Button')) {
       const c=attr(button,'controller'), page=attr(button,'page');

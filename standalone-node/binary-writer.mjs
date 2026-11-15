@@ -9,7 +9,7 @@ function str(value) {const b=Buffer.from(value,'utf8');if(b.length>65535) throw 
 
 export function encodeImagePackage(packageId, packageName, images, pages, {spriteTrim={},sounds=[],movieclips=[],fonts=[],components=[],dependencies=[],hitTests=[]} = {}) {
   if(!packageId || !packageName) throw new Error('package id and name required');
-  const version=Object.keys(spriteTrim).length || components.some(c=>(c.transitions??[]).some(t=>t.items.some(a=>a.tween?.path?.length))) || components.some(c=>c.children.some(child=>(child.gears??[]).some(g=>g.type==='display2')||(child.progress?.[2]??0)!==0||child.list?.scrollItemToViewOnClick===false||child.list?.foldInvisibleItems===true)) ? 2 : 1, table=[], indices=new Map();
+  const version=Object.keys(spriteTrim).length || components.some(c=>(c.transitions??[]).some(t=>t.items.some(a=>a.tween?.path?.length))) || components.some(c=>c.children.some(child=>(child.gears??[]).some(g=>g.type==='display2')||(child.progress?.[2]??0)!==0||child.list?.scrollItemToViewOnClick===false||child.list?.foldInvisibleItems===true||child.groupStyle?.excludeInvisibles||child.groupStyle?.autoSizeDisabled||(child.groupStyle?.mainGridIndex??-1)!==-1)) ? 2 : 1, table=[], indices=new Map();
   function ref(value) {
     if(value===null || value===undefined) return u16(65534);
     if(value==='') return u16(65533);
@@ -108,7 +108,7 @@ export function encodeImagePackage(packageId, packageName, images, pages, {sprit
         sections=[...sections.slice(0,4),join([i16(ls.pageController),i16(0),...(version>=2?[i16(0)]:[])]),style,i16(ls.selectionController),scroll,join([ref(ls.defaultItem),i16(ls.items.length),...items])];if(child.type==='tree')sections.push(join([i32(ls.indent),byte(ls.clickToExpand)]));
       }
       else if(child.type==='movieclip') sections.push(join([...(child.imageColor?[byte(1),Buffer.from(child.imageColor)]:[byte(0)]),byte(0),i32(child.frame??0),byte(child.playing??true)]));
-      else if(child.type==='group')sections.push(join([byte(0),i32(0),i32(0),...(version>=2?[byte(0),byte(0),i16(-1)]:[])]));
+      else if(child.type==='group'){const g=child.groupStyle??{};sections.push(join([byte(g.layout??0),i32(g.lineGap??0),i32(g.colGap??0),...(version>=2?[byte(g.excludeInvisibles??false),byte(g.autoSizeDisabled??false),i16(g.mainGridIndex??-1)]:[])]));}
       else if(child.type==='loader')sections.push(join([ref(child.url),byte(child.align??0),byte(child.vAlign??0),byte(child.fill??0),byte(0),byte(0),byte(0),byte(1),i32(0),...(child.imageColor?[byte(1),Buffer.from(child.imageColor)]:[byte(0)]),byte(child.fillMethod??0),...(child.fillMethod?[byte(0),byte(child.fillClockwise??true),f32(child.fillAmount??1)]:[])]));
       else if(child.type==='graph') {
         const type=child.graphType??0,style=[byte(type)];

@@ -1,0 +1,6 @@
+FairyGUI PixiJS community runtime
+Source: https://github.com/kevinchen2046/fairygui-pixijs-v5
+Revision: d65484f3228a17641011091ad0013aee74448470
+The upstream README states that the project is released under the MIT license.
+The bundled fairygui.js is the upstream bin/fairygui.js distribution.
+PixiJS, TweenJS and zlibjs are installed through npm and retain their own licenses.

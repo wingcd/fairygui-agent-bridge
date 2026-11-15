@@ -6,6 +6,7 @@ try {
   const [command, raw] = process.argv.slice(2);
   if (!command || !raw) throw new Error('usage: node fgui.mjs COMMAND JSON_OR_@FILE');
   const args = JSON.parse(raw.startsWith('@') ? fs.readFileSync(raw.slice(1),'utf8') : raw);
+  if(command==='screenshot' && !args.output)throw new Error('CLI screenshot requires an output path');
   const response = await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:command,arguments:args}});
   if (response.error) throw new Error(response.error.message);
   const result = JSON.parse(response.result.content[0].text);

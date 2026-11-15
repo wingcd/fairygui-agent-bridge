@@ -191,16 +191,17 @@ export function setComponentProperties(args) {
 
 function editProperties(original, args) {
   const props=args.props;
-  const allowed=['name','xy','size','scale','pivot','anchor','rotation','alpha','visible','touchable','grayed','text','color','font','fontSize','align','vAlign','autoSize','leading','letterSpacing','bold','italic','underline','singleLine','ubb','url','fill','fillMethod','fillClockwise','fillAmount','flip','frame','playing','forHitTest','type','lineSize','lineColor','fillColor','corner','points','sides','startAngle','distances','prompt','restrict','maxLength','keyboardType','password','strokeColor','shadowColor','shadowOffset','layout','selectionMode','lineGap','colGap','lineItemCount','lineItemCount2','autoItemSize','autoClearItems','scrollItemToViewOnClick','foldInvisibleItems','renderOrder','overflow','scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','margin','clipSoftness','defaultItem','pageController','selectionController'];
+  const allowed=['group','name','xy','size','scale','pivot','anchor','rotation','alpha','visible','touchable','grayed','text','color','font','fontSize','align','vAlign','autoSize','leading','letterSpacing','bold','italic','underline','singleLine','ubb','url','fill','fillMethod','fillClockwise','fillAmount','flip','frame','playing','forHitTest','type','lineSize','lineColor','fillColor','corner','points','sides','startAngle','distances','prompt','restrict','maxLength','keyboardType','password','strokeColor','shadowColor','shadowOffset','layout','advanced','excludeInvisibles','autoSizeDisabled','mainGridIndex','selectionMode','lineGap','colGap','lineItemCount','lineItemCount2','autoItemSize','autoClearItems','scrollItemToViewOnClick','foldInvisibleItems','renderOrder','overflow','scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','margin','clipSoftness','defaultItem','pageController','selectionController'];
   if(!props || typeof props!=='object' || Array.isArray(props) || !Object.keys(props).length || Object.keys(props).some(k=>!allowed.includes(k))) throw new Error('unsupported property or value');
   for(const [key,value] of Object.entries(props)) {
-    if(value===null&&['scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','pageController'].includes(key))continue;
-    if(['visible','touchable','anchor','grayed','bold','italic','underline','singleLine','ubb','fillClockwise','playing','password','forHitTest'].includes(key)) {if(typeof value!=='boolean' && !['true','false'].includes(value)) throw new Error(`${key} must be true or false`);}
+    if(value===null&&['group','scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','pageController'].includes(key))continue;
+    if(['visible','touchable','anchor','grayed','bold','italic','underline','singleLine','ubb','fillClockwise','playing','password','forHitTest','advanced','excludeInvisibles','autoSizeDisabled'].includes(key)) {if(typeof value!=='boolean' && !['true','false'].includes(value)) throw new Error(`${key} must be true or false`);}
     else if(['xy','size'].includes(key)) {const p=typeof value==='string'?value.split(','):[];if(p.length!==2 || p.some(x=>! /^[+-]?\d+$/.test(x.trim()) || Number(x)<-2147483648 || Number(x)>2147483647 || (key==='size' && Number(x)<0))) throw new Error(`invalid ${key}`);}
     else if(['scale','pivot'].includes(key)) {const p=typeof value==='string'?value.split(','):[];if(p.length!==2 || p.some(x=>!x.trim() || !Number.isFinite(Number(x)) || Math.abs(Number(x))>100000)) throw new Error(`invalid ${key}`);}
     else if(['rotation','alpha','fontSize'].includes(key)) {if(typeof value==='boolean' || (typeof value!=='number' && typeof value!=='string') || !String(value).trim()) throw new Error(`invalid ${key}`);const n=Number(value);if(!Number.isFinite(n) || (key==='rotation' && Math.abs(n)>100000) || (key==='alpha' && (n<0 || n>1)) || (key==='fontSize' && (!Number.isInteger(n) || n<=0 || n>32767))) throw new Error(`invalid ${key}`);}
     else if(['leading','letterSpacing'].includes(key)) {if(!['number','string'].includes(typeof value)||!/^[+-]?\d+$/.test(String(value).trim()) || Number(value)<-32768 || Number(value)>32767) throw new Error(`invalid ${key}`);}
     else if(key==='align' && !['left','center','right'].includes(value) || key==='vAlign' && !['top','middle','bottom'].includes(value) || key==='autoSize' && !['none','both','height','shrink'].includes(value)) throw new Error(`invalid ${key}`);
+    else if(key==='group' && (typeof value!=='string'||!value))throw new Error('group must be a nonempty group ID or null');
     else if(key==='url' && typeof value!=='string')throw new Error('url must be a string');
     else if(key==='fill' && !['none','scale','scaleMatchHeight','scaleMatchWidth','scaleFree','scaleNoBorder'].includes(value))throw new Error('invalid loader fill');
     else if(key==='fillMethod' && !['none','hz','vt','radial90','radial180','radial360'].includes(value))throw new Error('invalid fillMethod');
@@ -210,7 +211,7 @@ function editProperties(original, args) {
     else if(['prompt','restrict'].includes(key)&&typeof value!=='string')throw new Error(`${key} must be a string`);
     else if(['maxLength','keyboardType'].includes(key)&&(typeof value==='boolean'||!['number','string'].includes(typeof value)||!/^\d+$/.test(String(value))||Number(value)>2147483647))throw new Error(`invalid ${key}`);
     else if(['strokeColor','shadowColor'].includes(key)&&value!==null&&(typeof value!=='string'||!/^#[0-9a-f]{6}$/i.test(value)))throw new Error(`invalid ${key}`);
-    else if(key==='layout'&&!['column','row','flow_hz','flow_vt','pagination'].includes(value))throw new Error('invalid list layout');
+    else if(key==='layout'&&!['column','row','flow_hz','flow_vt','pagination','none','hz','vt'].includes(value))throw new Error('invalid list layout');
     else if(key==='selectionMode'&&!['single','multiple','multipleSingleClick','none'].includes(value))throw new Error('invalid list selectionMode');
     else if(key==='overflow'&&!['visible','hidden','scroll'].includes(value))throw new Error('invalid list overflow');
     else if(key==='scroll'&&!['horizontal','vertical','both'].includes(value))throw new Error('invalid list scroll');
@@ -219,7 +220,8 @@ function editProperties(original, args) {
     else if(['scrollBarRes','ptrRes'].includes(key)){const parts=typeof value==='string'?value.split(','):[];if(parts.length!==2||parts.some(part=>part&&!part.startsWith('ui://')))throw new Error(`invalid ${key}`);}
     else if(['margin','clipSoftness','scrollBarMargin'].includes(key)){const parts=typeof value==='string'?value.split(','):[];if(parts.length!==(key==='clipSoftness'?2:4)||parts.some(part=>!/^\d+$/.test(part.trim())||Number(part)>100000))throw new Error(`invalid ${key}`);}
 
-    else if(['lineGap','colGap','lineItemCount','lineItemCount2'].includes(key)&&(!['number','string'].includes(typeof value)||!/^[+-]?\d+$/.test(String(value))||Number(value)<(key.startsWith('lineItemCount')?0:-32768)||Number(value)>32767))throw new Error(`invalid ${key}`);
+    else if(key==='mainGridIndex'&&(!['number','string'].includes(typeof value)||!/^[+-]?\d+$/.test(String(value))||Number(value)<-32768||Number(value)>32767))throw new Error('invalid mainGridIndex');
+    else if(['lineGap','colGap','lineItemCount','lineItemCount2'].includes(key)&&(!['number','string'].includes(typeof value)||!/^[+-]?\d+$/.test(String(value))||Number(value)<(key.startsWith('lineItemCount')?0:-2147483648)||Number(value)>(key.startsWith('lineItemCount')?32767:2147483647)))throw new Error(`invalid ${key}`);
     else if(['autoItemSize','autoClearItems','scrollItemToViewOnClick','foldInvisibleItems'].includes(key)&&typeof value!=='boolean'&&!['true','false'].includes(value))throw new Error(`invalid ${key}`);
     else if(key==='renderOrder'&&!['ascent','descent','arch'].includes(value))throw new Error('invalid list renderOrder');
     else if(['defaultItem','pageController','selectionController'].includes(key)&&typeof value!=='string')throw new Error(`${key} must be a string`);
@@ -232,12 +234,18 @@ function editProperties(original, args) {
   const matches=objects.map((n,i)=>({n,i})).filter(({n})=>args.target===attr(n,'id') || args.target===attr(n,'name'));
   if(matches.length!==1) throw new Error('target child not found or ambiguous');
   const {n:selected,i:targetIndex}=matches[0], type=selected.tagName;
+  if(props.group!==undefined && props.group!==null && type==='group')throw new Error('groups cannot belong to groups');
+  if(props.group!==undefined && props.group!==null && !objects.some(object=>object.tagName==='group'&&attr(object,'id')===props.group))throw new Error('group ID must refer to a sibling group');
   if('forHitTest' in props&&type!=='image')throw new Error('forHitTest applies only to images');
   if(type==='image'&&String(props.forHitTest??attr(selected,'forHitTest')??'false')==='true'){
     const xy=String(props.xy??attr(selected,'xy')??'').split(',');
     if(attr(selected,'pkg')||attr(node,'hitTest')||objects.some(other=>other!==selected&&other.tagName==='image'&&attr(other,'forHitTest')==='true')||xy.length!==2||xy.some(value=>!value.trim()||Number(value)!==0)||['size','scale','pivot','rotation','flip','fillMethod'].some(key=>Object.hasOwn(props,key)||selected.hasAttribute(key)))throw new Error('pixel hit test image requires an untransformed same-package image at 0,0 and no other hit test');
   }
-  if(Object.keys(props).some(k=>['layout','selectionMode','lineGap','colGap','lineItemCount','lineItemCount2','autoItemSize','autoClearItems','scrollItemToViewOnClick','foldInvisibleItems','renderOrder','overflow','scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','margin','clipSoftness','defaultItem','pageController','selectionController'].includes(k))&&type!=='list')throw new Error('list settings apply only to list objects');
+  if(Object.keys(props).some(k=>['selectionMode','lineItemCount','lineItemCount2','autoItemSize','autoClearItems','scrollItemToViewOnClick','foldInvisibleItems','renderOrder','overflow','scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','margin','clipSoftness','defaultItem','pageController','selectionController'].includes(k))&&type!=='list')throw new Error('list settings apply only to list objects');
+  if(Object.keys(props).some(k=>['layout','lineGap','colGap'].includes(k))&&!['list','group'].includes(type))throw new Error('layout and gaps apply only to lists or groups');
+  if('layout' in props&&!((type==='group'?['none','hz','vt']:['column','row','flow_hz','flow_vt','pagination']).includes(props.layout)))throw new Error('invalid layout for object type');
+  if(Object.keys(props).some(k=>['advanced','excludeInvisibles','autoSizeDisabled','mainGridIndex'].includes(k))&&type!=='group')throw new Error('group settings apply only to groups');
+  if(type==='list'&&['lineGap','colGap'].some(key=>key in props&&(Number(props[key]) < -32768||Number(props[key]) > 32767)))throw new Error('list gaps must fit signed 16-bit integers');
   if(type==='list'){const overflow=props.overflow??attr(selected,'overflow')??'visible',scrollFields=['scroll','scrollBar','scrollBarFlags','scrollBarMargin','scrollBarRes','ptrRes','pageController'];if(overflow!=='scroll'&&scrollFields.some(key=>(Object.hasOwn(props,key)?props[key]!==null:selected.hasAttribute(key))))throw new Error('list scroll settings require scroll overflow');}
   if('color' in props&&!['text','richtext','inputtext','image','loader','jta','movieclip'].includes(type))throw new Error('color applies only to text, image, loader and movieclip objects');
   if(Object.keys(props).some(k=>['text','font','fontSize','autoSize','leading','letterSpacing','bold','italic','underline','singleLine','ubb','strokeColor','shadowColor','shadowOffset'].includes(k)) && !['text','richtext','inputtext'].includes(type)) throw new Error('text properties apply only to text objects');
@@ -278,7 +286,7 @@ function editProperties(original, args) {
   let tag=xml.slice(start,end);
   for(const [key,value] of Object.entries(props)) {
     if(value===null){tag=tag.replace(new RegExp(`\\s+${key}\\s*=\\s*(?:"[^"]*"|'[^']*')`),'');continue;}
-    const v=['xy','size','margin','clipSoftness','scrollBarMargin'].includes(key)?value.split(',').map(Number).join(','):['fontSize','leading','letterSpacing','frame','lineGap','colGap','lineItemCount','lineItemCount2','scrollBarFlags'].includes(key)?String(Number(value)):String(value), escaped=v.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('\n','&#10;').replaceAll('\r','&#13;').replaceAll('\t','&#9;');
+    const v=['xy','size','margin','clipSoftness','scrollBarMargin'].includes(key)?value.split(',').map(Number).join(','):['fontSize','leading','letterSpacing','frame','lineGap','colGap','lineItemCount','lineItemCount2','scrollBarFlags','mainGridIndex'].includes(key)?String(Number(value)):String(value), escaped=v.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('\n','&#10;').replaceAll('\r','&#13;').replaceAll('\t','&#9;');
     const replacement=`${key}="${escaped}"`, pattern=new RegExp(`(?<![^\\s])${key}\\s*=\\s*(?:"[^"]*"|'[^']*')`);
     if(pattern.test(tag)) tag=tag.replace(pattern,()=>replacement);else {let pos=tag.trimEnd().length;if(tag[pos-1]==='/')pos--;tag=tag.slice(0,pos)+' '+replacement+tag.slice(pos);}
   }

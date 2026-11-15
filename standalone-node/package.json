@@ -3,11 +3,14 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@createjs/tweenjs": "^2.0.0-beta.4",
     "@xmldom/xmldom": "0.9.12",
     "ajv": "^8.20.0",
     "htmlparser2": "12.0.0",
+    "pixi.js": "^6.5.10",
     "playwright-core": "^1.65.1",
-    "sharp": "0.35.5"
+    "sharp": "0.35.5",
+    "zlibjs": "^0.3.1"
   },
   "scripts": {
     "test": "node --test *.test.mjs"

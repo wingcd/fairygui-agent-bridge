@@ -66,7 +66,8 @@ name or ID, optional `ref_pkg`, `object_name`, `x`, `y`, and zero-based `index`.
 `insert_object`, `move_object`, and `remove_object` edit the display list;
 removal rejects objects referenced elsewhere in the component. New display
 objects must include a valid `xy` position, which the editor requires.
-Group members must be sibling display-list objects with a `group` attribute;
+`set_properties` also edits group advanced mode, layout, gaps, visibility exclusion, auto-size and main-grid index. Disabling advanced mode makes the group editor-only.
+Use `set_properties` with `group` set to a sibling group ID to assign membership, or null to clear it. Group members must be sibling display-list objects;
 nesting display objects inside a `<group>` is reported as invalid.
 `find_references` scans registered component references, supported UI URLs,
 project settings and same-package bitmap fonts; its `complete` flag reports
@@ -85,7 +86,7 @@ input-text, list and tree children, including supported child transforms, basic 
 display/display2, text/font-size, position/size/look, color and movieclip
 animation gears, component/child relations, controller transition actions, supported gear tween settings,
 and transition actions including tween paths.
-Default-layout groups and editor-only groups are supported.
+Advanced groups support none, horizontal and vertical layouts, gaps, visibility exclusion, auto-size and main-grid settings. Editor-only groups are also supported.
 Component pivot, margin, scrolling overflow, opacity, masks, child hit tests
 and supported image pixel hit tests are also supported.
 Image tint, flip and fill settings and movieclip tint are supported.
@@ -133,8 +134,8 @@ checks atlas and sound files, sprite and media references, pixel mask
 dimensions and optional sprite overlap, with optional source image metadata
 and pixel comparison, plus source sound byte comparison. Pixel comparison ignores
 embedded ICC profiles and RGB values where alpha is zero. XML inspection checks resource metadata, component XML
-well-formedness and sprite manifests; it does not inspect component, font or movieclip
-behavior. Use `exported_only: true` for filtered publications. It does not validate component
+well-formedness, sprite manifests, movieclip frame references and image-glyph font
+references; it does not inspect their runtime behavior. Use `exported_only: true` for filtered publications. It does not validate component
 behavior or establish editor compatibility.
 
 For binary packages, `validate_published` also accepts `compare_components: true`
@@ -220,16 +221,23 @@ The report includes the Creator exit code and build diagnostics. Exit code 36
 is accepted only when the build reports success, produces the web entry point,
 and every logged error is the known Babel large-file deoptimization note.
 
+To audit all registered components with the Pixi screenshot path, run
+`node audit-screenshots.mjs PROJECT`. It emits one JSON record per component and
+a final count; any failed screenshot produces a nonzero exit status. This checks
+whether an image can be produced, not pixel equivalence with the editor.
+
 ## Experimental component screenshot
 
-The `screenshot` CLI/MCP tool builds a temporary copy of a Cocos Creator 3.8
-web demo and renders an exported component with the real `fairygui-cc` runtime.
+The `screenshot` CLI/MCP tool defaults to the experimental PIXI renderer described
+below. Set `renderer: "cocos"` to build a temporary copy of a Cocos Creator 3.8
+web demo and render a component with the real `fairygui-cc` runtime.
 It requires a Cocos demo template matching the repository demo, a built
 `fairygui-cc` distribution (`package.json` and `dist/`), Creator and Chrome.
-This first version rebuilds the web application on each call and is slow; it
-is not a persistent web viewer. The experimental publisher must support every
-exported resource in the project, and the requested component must appear in
-the published package. Unsupported content fails instead of being silently
+Fresh renders rebuild the web application and are slow; optional same-frame reuse is described below. The experimental publisher must support exported resources in the target package
+and the packages it depends on. The requested component is included even
+if the component is not exported; the source project is not modified. Cross-package
+dependencies must still be exported or reachable from an exported resource in
+their own package. Unsupported content fails instead of being silently
 approximated. The PNG contains the full viewport with the component at the
 runtime's default position, including the demo scene background. It captures
 one running state, not every controller or animation state.
@@ -238,8 +246,145 @@ Example JSON for `node fgui.mjs screenshot @screenshot.json` (the output file
 must not exist):
 
 ```json
-{"project":"E:/game_dev/FairyGUI-cocoscreator/demo/UIProject","pkg":"MainMenu","name":"Main","output":"C:/temp/main.png","demo":"E:/game_dev/FairyGUI-cocoscreator/demo","distribution":"E:/game_dev/FairyGUI-cocoscreator/source","creator":"C:/ProgramData/Cocos/editors/Creator/3.8.4/CocosCreator.exe","chrome":"C:/Program Files/Google/Chrome/Application/chrome.exe","width":1000,"height":700,"settle_ms":1000}
+{"project":"E:/game_dev/FairyGUI-cocoscreator/demo/UIProject","pkg":"MainMenu","name":"Main","renderer":"cocos","output":"C:/temp/main.png","demo":"E:/game_dev/FairyGUI-cocoscreator/demo","distribution":"E:/game_dev/FairyGUI-cocoscreator/source","creator":"C:/ProgramData/Cocos/editors/Creator/3.8.4/CocosCreator.exe","chrome":"C:/Program Files/Google/Chrome/Application/chrome.exe","width":1000,"height":700,"settle_ms":1000}
 ```
 
 The same arguments work through `tools/call` on either MCP transport. Building
 and rendering do not modify the source project or the demo template.
+
+MCP screenshot responses include an `image/png` image content block as well as
+JSON metadata. If an output path is supplied, the PNG is saved there as well.
+CLI output remains JSON metadata and requires an output path.
+
+To run the end-to-end MCP screenshot test, set `FGUI_SCREENSHOT_CONFIG` to a
+UTF-8 JSON file containing the screenshot arguments above except `output`, then
+run `node --test screenshot.test.mjs`. The test compares the MCP image bytes to
+the saved PNG and requires the real Creator and Chrome dependencies.
+
+The local HTTP service also provides an experimental screenshot viewer at
+`http://127.0.0.1:7532/viewer`. It defaults to PIXI and can also select the
+Cocos renderer. A fresh Cocos render triggers a new build; optional same-frame
+reuse can avoid that build.
+The page shows the resulting image, but does not yet provide live editing.
+
+For repeated calls, set `FGUI_COCOS_DEMO`, `FGUI_COCOS_DISTRIBUTION`,
+`FGUI_COCOS_CREATOR`, and `FGUI_CHROME` in the service environment. Screenshot
+calls can then omit `demo`, `distribution`, `creator`, and `chrome`; explicit
+arguments take precedence. The viewer accepts empty fields for these defaults.
+
+Set `reuse_screenshot: true` (or check reuse in the viewer) to reuse an exact
+previous PNG in the same server process. Up to four images of 8 MiB each are
+kept in memory; publication still runs and the source assets, demo, runtime,
+Creator and browser executables are fingerprinted. `cached` in the result
+identifies a hit. The cache intentionally returns the previous frame: animations,
+external fonts, system settings and other external runtime state are not
+refreshed. Leave it disabled to render a new frame. Symbolic links in cache
+inputs are rejected. Restarting the service clears the cache.
+
+For MCP, `output` can be omitted to return the PNG as image content without
+creating a file; the CLI still requires an output path. The viewer likewise
+accepts an empty output and offers a download link.
+Before a fresh capture, the Cocos renderer waits for network activity to settle.
+Both renderers wait for package resources, browser fonts, the configured delay, and two animation
+frames. A resource or font loading timeout is reported instead of returning a
+potentially incomplete image. Runtime-specific asynchronous work is not
+necessarily represented by browser network or font state.
+
+The stdio MCP service can process independent requests while a screenshot is
+building. Responses are correlated by JSON-RPC ID and may arrive out of order.
+The opt-in screenshot tests also verify that stdio and Streamable HTTP can
+serve another project while a real Cocos screenshot is in progress.
+
+`lint` runs the repository standards checker and returns its report and valid
+status. `publish_simple_experimental` is a compatibility name for the Node
+basic publisher; it has the same scope and limitations as
+`publish_basic_experimental` rather than promising identical implementation
+coverage to Python.
+
+`node benchmark-service.mjs PROJECT [PROJECT ...]` runs 100 read-only
+`list_packages` requests through one local service with four workers and reports
+throughput and latency. Add `--tool=project_info` to measure project metadata instead. Results depend on machine load and filesystem caching;
+they do not measure writes, publication, or screenshot builds.
+
+The default `screenshot` renderer (`renderer: "pixi"`) uses the community
+FairyGUI PixiJS runtime and Chrome directly, without Cocos Creator. It currently
+detects Chrome in common installation locations; `chrome` or `FGUI_CHROME`
+can select a different executable. It currently
+uses a restricted legacy XML preview subset, including simple nested Button and Label
+components and styled text including outline and shadows; unsupported features are rejected. Only the requested component and
+its same-package dependencies are selected; referenced external packages still
+include their exported resources. The Cocos sample
+`MainMenu/Main` renders, but pixel comparison found differences from Cocos
+(mainly rendering and text); the two are not pixel-identical. The PIXI preview
+uses the controller `selected` page stored for the editor; binary runtime
+publication currently starts controllers on their published home page instead. The Cocos renderer
+is available explicitly for projects outside the PIXI preview subset. PIXI
+mode supports `reuse_screenshot` with content-based invalidation and coalesces
+concurrent requests for the same inputs; the viewer has a renderer selector.
+
+For the Cocos demo's 16 `Main` components, automated screenshot checks cover
+MainMenu, Joystick, ModalWaiting, HitTest, Basics, ListEffect, LoopList,
+ScrollPane, VirtualList, Transition, Chat, Bag, Guide, Cooldown, PullToRefresh and
+TreeView. All 16 sample `Main` components now have initial screenshot checks.
+These checks establish that initial content renders, not pixel parity with the
+editor or full support for every component in each sample.
+Input text is rendered in its unfocused state, including password masking,
+plain-text prompts and the tested color-marked prompt forms; other styled input
+prompts are not yet supported.
+Rich-text fields support plain text and the tested UBB subset (bold, italic,
+underline, color, size, font face, links and inline package images). Styled runs and images
+are laid out by the preview and may differ from Cocos or the editor. A limited
+HTML subset (bold, italic, underline, font face/color/size, links, line breaks and
+package images) is supported. Other HTML, UBB with bitmap fonts, and nonempty
+size-constrained rich text are rejected.
+JTA movieclip frames are packed into preview atlases and can be played or selected.
+Static grayed objects use the PIXI runtime's grayscale filter.
+Bitmap fonts backed by individual image glyphs or a single texture are supported
+for the tested glyph and tint settings.
+Automatic linear rotation transitions and pull-to-refresh header/footer resources
+are supported for the shapes exercised by the preview tests; other autoplay
+transitions remain unsupported.
+Tree previews initialize the expanded nodes, indentation, leaf controllers and
+icons; interactive tree expansion is not implemented in this screenshot viewer.
+Lists also support an explicitly supplied vertical scrollbar in automatic
+mode and tested project-default scrollbars from Common.json; other visible
+scrollbar configurations remain unsupported.
+
+PIXI preview packs temporary atlases without trimming or rotation because the
+legacy runtime does not preserve trimmed sprite offsets. This does not alter
+the project settings or the normal publication output.
+PIXI preview respects portrait and landscape viewport orientations.
+PIXI captures also fail when the browser reports a resource HTTP error or an
+uncaught runtime error, and wait for browser fonts and two render frames before
+capturing.
+PIXI preview supports cross-package image and component references when the
+source `pkg` attribute uses the package name or ID; external resources must be exported.
+Package names are normalized in temporary preview data without changing project files. Only the selected component and its transitive dependencies are
+included, including across packages; unrelated exported resources are excluded.
+PIXI supports object scale, opacity, visibility and fractional rotation. Image tint and
+horizontal, vertical and combined flips are supported by the Pixi preview. Nested
+component pivot and pivot-as-anchor positioning are supported. Nine-slice and
+tiled images, including flipped instances, are covered by screenshot tests. The
+selected controller page also applies position, size, look, plain-text, font-size,
+and image and text color/outline gears in previews. Loader icon gears support image and component URLs
+and empty values. Basic groups propagate visibility and position;
+components support hidden overflow clipping and scroll overflow with hidden scrollbars. Progress bars support instance values, default values and nonzero minima.
+Images support horizontal, vertical, 90-, 180- and 360-degree radial fills,
+including use as a progress bar, for the default fill origin. Ellipses, polygons, regular polygons and rectangles
+with an integer uniform corner radius are supported. Graph masks are supported;
+reversed masks currently cover static rectangles and ellipses with no border or
+transform. Movieclip tint and controller-selected animation frames are supported,
+as are combined display gears and initial ComboBox item titles. Preview packages
+may contain MP3 and Ogg sound assets; audio playback has not been verified.
+Hit-test metadata does not
+affect captured pixels; interactive hit-testing is not provided by the preview. Package image and component loaders support local and cross-package UI URLs,
+alignment and scaling; image loaders also support tint and tested horizontal, vertical and radial fills. Component loader tint,
+external URLs are not supported by this preview; local movieclip loaders and movieclip icons in tree items are supported. Static
+row, column, flow and tested paginated lists with component items and spacing are supported.
+Hidden and scroll overflow are supported; automatic vertical scrollbars and
+pull-to-refresh resources are supported in the tested configurations. Interactive
+scrolling is not provided by the screenshot viewer. List clip softness is
+ignored to match the Cocos runtime. Non-autoplay transitions are omitted from
+the temporary preview; the supported autoplay rotation shape is described above. List
+Button items support nonempty title and icon overrides; empty overrides and
+overrides on other item types are rejected.

@@ -1,15 +1,18 @@
 import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { message } from './mcp.mjs';
+import { viewer } from './viewer.mjs';
 
 const version = '2025-03-26', maxBody = 16 * 1024 * 1024;
 export function createServer() {
   return http.createServer((req, res) => {
     const reply = (status, value) => { const body = value === undefined ? '' : JSON.stringify(value); res.writeHead(status, {'Content-Type':'application/json; charset=utf-8','Content-Length':Buffer.byteLength(body),'Cache-Control':'no-store'}); res.end(body); };
     const port = res.socket.localPort;
-    if (req.headers.origin || ![`localhost:${port}`,`127.0.0.1:${port}`].includes(req.headers.host)) { req.resume(); return reply(403,{error:'loopback host required; browser origins are not accepted'}); }
+    const viewerRequest=req.url === '/viewer-rpc';
+    if ((!viewerRequest && req.headers.origin) || (viewerRequest && req.headers.origin !== `http://${req.headers.host}`) || ![`localhost:${port}`,`127.0.0.1:${port}`].includes(req.headers.host)) { req.resume(); return reply(403,{error:'loopback host required; browser origins are not accepted'}); }
+    if (req.method === 'GET' && req.url === '/viewer') { res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",'X-Content-Type-Options':'nosniff'}); return res.end(viewer); }
     if (req.method === 'GET' && req.url === '/health') return reply(200,{ok:true,transport:'json-rpc-http',mcp_version:version});
-    if (req.method !== 'POST' || !['/rpc','/mcp'].includes(req.url)) { req.resume(); return reply(404,{error:'not found'}); }
+    if (req.method !== 'POST' || !['/rpc','/mcp','/viewer-rpc'].includes(req.url)) { req.resume(); return reply(404,{error:'not found'}); }
     if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) { req.resume(); return reply(415,{error:'Content-Type must be application/json'}); }
     if (req.url === '/mcp' && (!req.headers.accept?.includes('application/json') || !req.headers.accept?.includes('text/event-stream'))) { req.resume(); return reply(406,{error:'Accept must include application/json and text/event-stream'}); }
     if (req.url === '/mcp' && req.headers['mcp-protocol-version'] && req.headers['mcp-protocol-version'] !== version) { req.resume(); return reply(400,{error:'unsupported MCP protocol version'}); }
@@ -20,6 +23,7 @@ export function createServer() {
       let parsed;
       try { parsed = JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts))); }
       catch { return reply(400,{jsonrpc:'2.0',id:null,error:{code:-32700,message:'Parse error'}}); }
+      if (viewerRequest && (Array.isArray(parsed) || parsed?.method !== 'tools/call' || !['screenshot','list_packages','list_items'].includes(parsed?.params?.name))) return reply(403,{error:'viewer only accepts preview and listing calls'});
       if (Array.isArray(parsed)) {
         if (req.url !== '/mcp' || !parsed.length || parsed.length > 100 || parsed.some(item => item?.method === 'initialize')) return reply(400,{jsonrpc:'2.0',id:null,error:{code:-32600,message:'Invalid batch'}});
         const responses = (await Promise.all(parsed.map(item => message(item,version)))).filter(Boolean);

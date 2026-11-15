@@ -47,10 +47,13 @@ export function componentPath(folder, item) {
   if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) throw new Error('resource path escapes package');
   return target;
 }
+const packageListCache=new Map();let packageListBytes=0;
+function listPackageRecords(root){return fs.readdirSync(path.join(root,'assets')).sort().flatMap(name=>{const folder=path.join(root,'assets',name),file=path.join(folder,'package.xml');if(!fs.existsSync(file)||!fs.statSync(file).isFile())return [];const bytes=fs.readFileSync(file),cached=packageListCache.get(file);let id;if(cached&&cached.bytes.equals(bytes)){id=cached.id;packageListCache.delete(file);packageListCache.set(file,cached);}else{if(cached){packageListBytes-=cached.bytes.length;packageListCache.delete(file);}const tree=parse(bytes,file);if(tree.tagName!=='packageDescription')throw new Error(file+': expected packageDescription');id=attr(tree,'id');if(bytes.length<=4*1024*1024){packageListCache.set(file,{bytes,id});packageListBytes+=bytes.length;while(packageListCache.size>256||packageListBytes>4*1024*1024){const key=packageListCache.keys().next().value;packageListBytes-=packageListCache.get(key).bytes.length;packageListCache.delete(key);}}}return [{name,id,path:folder}];});}
 export function execute(command, args) {
-  const root = projectRoot(args.project), all = packages(root);
-  if (command === 'project_info') return { root, projects: fs.readdirSync(root).filter(n => isFairyDescriptorName(n)).sort().map(n => ({file:path.join(root,n), attributes:attrs(parse(fs.readFileSync(path.join(root,n)),n))})), package_count: all.length };
-  if (command === 'list_packages') return all.map(({folder,tree}) => ({name:path.basename(folder),id:attr(tree,'id'),path:folder}));
+  const root = projectRoot(args.project);
+  if(command==='list_packages')return listPackageRecords(root);
+  if (command === 'project_info') { const package_count=listPackageRecords(root).length,selected=fs.statSync(args.project).isFile()?[path.basename(fs.realpathSync(args.project))]:fs.readdirSync(root).filter(n => isFairyDescriptorName(n)).sort(); return { root, projects:selected.map(n => ({file:path.join(root,n), attributes:attrs(parse(fs.readFileSync(path.join(root,n)),n))})), package_count }; }
+  const all=packages(root);
   const matched = all.filter(({folder,tree}) => args.pkg === path.basename(folder) || args.pkg === attr(tree,'id'));
   if (matched.length !== 1) throw new Error(`package ${JSON.stringify(args.pkg)} not found or ambiguous`);
   const {folder,tree} = matched[0];

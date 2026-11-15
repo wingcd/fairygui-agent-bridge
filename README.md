@@ -26,6 +26,17 @@ JSON-RPC 地址为 `http://127.0.0.1:7532/rpc`，MCP Streamable HTTP 地址为 `
 node fgui.mjs list_packages '{"project":"D:/work/my-ui-project"}'
 ```
 
+启动服务后，访问 `http://127.0.0.1:7532/viewer` 可选择项目、包和组件，
+通过 FairyGUI Pixi 运行时预览并截图；无需打开编辑器。逐个检查项目中已注册
+组件能否截图，可在 `standalone-node` 目录运行：
+
+```powershell
+node audit-screenshots.mjs D:/work/my-ui-project
+```
+
+检查结果逐行输出 JSON，失败时返回非零退出码。截图使用的 Pixi 预览仍有
+功能与排版限制，生成图片不等同于验证与编辑器逐像素一致。
+
 服务支持项目和组件读写、资源导入、校验、图集及实验性发布。项目级发布和预检默认按导出资源及跨包依赖处理；设置 `exported_only: false` 可包含全部已注册资源。写操作使用读取结果中的 `sha256` 防止覆盖过期版本。16 个 Cocos 样例的筛选发布结果已经过编辑器数据和图集像素对比；并非全部编辑器功能和运行时渲染均已验证。完整用法、限制和测试命令见 [独立服务说明](standalone-node/README.md)。Python 实现仍保留在 `standalone/`。
 
 ## 架构
