@@ -622,3 +622,20 @@ test('PIXI plays multiple autoplay transition items together',{skip:!process.env
   await fs.writeFile(file,source.replace('type="Alpha"','type="Shake"'));const rejected=await message({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:120,height:80,settle_ms:0}}});assert.equal(rejected.result.isError,true);assert.match(rejected.result.content[0].text,/autoplay transition both/);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI plays automatic size and scale transitions',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-size-transition-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});
+  await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');
+  await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');
+  for(const [type,start,end] of [['Size','10,10','40,40'],['Scale','1,1','4,4']]){
+   const source=`<component size="100,100"><displayList><graph id="g" xy="10,10" size="10,10" type="rect" lineSize="0" fillColor="#ffff0000"/></displayList><transition name="grow" autoPlay="true"><item time="0" type="${type}" target="g" tween="true" startValue="${start}" endValue="${end}" duration="24" ease="Linear"/></transition></component>`;
+   const file=path.join(dir,'Main.xml');await fs.writeFile(file,source);
+   const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:100,height:100,settle_ms:2000}}});assert.equal(response.result.isError,false,response.result.content[0].text);
+   const pixels=await sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();let red=0;for(let i=0;i<pixels.length;i+=3)if(pixels[i]>150&&pixels[i+1]<80&&pixels[i+2]<80)red++;assert.ok(red>500,`${type} grows the graph: ${red}`);assert.equal(await fs.readFile(file,'utf8'),source);
+  }
+  await fs.writeFile(path.join(dir,'Main.xml'),'<component size="100,100"><displayList><graph id="g" xy="10,10" size="10,10" type="rect"/></displayList><transition name="bad" autoPlay="true"><item time="0" type="Size" target="g" tween="true" startValue="10,10" endValue="-1,40" duration="24"/></transition></component>');
+  const bad=await message({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:100,height:100,settle_ms:0}}});assert.equal(bad.result.isError,true);assert.match(bad.result.content[0].text,/autoplay transition bad/);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
