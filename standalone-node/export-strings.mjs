@@ -8,7 +8,7 @@ import {packages,resources,componentPath,parse,children,attr,projectRoot} from '
 export async function exportStrings(args){
  const root=projectRoot(args.project),rows=[],keys=new Set(),snapshot=new Map(),initial=packages(root);
  const read=async file=>{const bytes=await fs.readFile(file);snapshot.set(file,crypto.createHash('sha256').update(bytes).digest('hex'));return bytes;};
- const add=(key,value,label)=>{if(!value||value==='-'||!/[\p{L}]/u.test(value))return;if(keys.has(key))throw new Error('duplicate translation key: '+key);keys.add(key);rows.push({key,value,label});};
+ const add=(key,value,label)=>{if(!value||value==='-'||!/[A-\uffff]/.test(value))return;if(keys.has(key))throw new Error('duplicate translation key: '+key);keys.add(key);rows.push({key,value,label});};
  for(const pkg of initial){
   const packageFile=path.join(pkg.folder,'package.xml');pkg.tree=parse(await read(packageFile),packageFile);if(pkg.tree.tagName!=='packageDescription')throw new Error('invalid package root: '+packageFile);
   const packageId=attr(pkg.tree,'id');if(!packageId)throw new Error('package id is missing');

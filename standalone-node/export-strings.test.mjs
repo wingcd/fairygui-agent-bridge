@@ -11,3 +11,19 @@ test('experimental strings export returns TranslationHelper keys without overwri
 test('sample strings match a real editor export',{skip:!process.env.FGUI_SAMPLE_PROJECT||!process.env.FGUI_EDITOR_STRINGS_REFERENCE,timeout:60000},async()=>{
  const result=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'export_strings',arguments:{project:process.env.FGUI_SAMPLE_PROJECT}}});assert.equal(result.result.isError,false,result.result.content[0].text);const output=JSON.parse(result.result.content[0].text).data,expected=await fs.readFile(process.env.FGUI_EDITOR_STRINGS_REFERENCE,'utf8');assert.deepEqual(entries(output.xml),entries(expected));assert.deepEqual(labels(output.xml),labels(expected));assert.ok(output.count>200);
 });
+
+test('strings filter matches editor Unicode and punctuation cases',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-strings-unicode-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="comp" name="Main.xml" path="/"/></resources></packageDescription>');const values=['123','-','!','😀','中','é','Ж','العربية','21:03','100%','A1','[color=#FF0000]123[/color]','[b]123[/b]','<b>123</b>','→','  Hello  ','1e3','v2','_','®','©','☀','💰','  '],escape=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');await fs.writeFile(path.join(dir,'Main.xml'),'<component size="100,100"><displayList>'+values.map((v,i)=>`<text id="t${i}" xy="0,0" text="${escape(v)}"/>`).join('')+'</displayList></component>');
+  const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'export_strings',arguments:{project:root}}});assert.equal(response.result.isError,false,response.result.content[0].text);const actual=entries(JSON.parse(response.result.content[0].text).data.xml),expected=Object.fromEntries([3,4,5,6,7,10,11,12,13,14,15,16,17,18,19,20,21,22].map(i=>['abcdefghcomp-t'+i,values[i]]));assert.deepEqual(actual,expected);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('strings filter preserves editor-retained ASCII and Unicode symbols',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-strings-symbols-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="comp" name="Main.xml" path="/"/></resources></packageDescription>');const values=['\u00a0','\u3000','\t','-12','+12','3.14','-0.5','12/34','12:34','1,234','100%','?','.',':','/','\\','@','#','$','^','&','*','(',')','+','=','~','`','|','[',']','{','}',';',"'",'"','。','—','①','²','۰','١','１'],escape=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');await fs.writeFile(path.join(dir,'Main.xml'),'<component size="100,100"><displayList>'+values.map((v,i)=>`<text id="t${i}" xy="0,0" text="${escape(v)}"/>`).join('')+'</displayList></component>');
+  const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'export_strings',arguments:{project:root}}});assert.equal(response.result.isError,false,response.result.content[0].text);const actual=entries(JSON.parse(response.result.content[0].text).data.xml),expected=Object.fromEntries([0,1,15,19,26,27,28,29,30,31,32,36,37,38,39,40,41,42].map(i=>['abcdefghcomp-t'+i,values[i]]));assert.deepEqual(actual,expected);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

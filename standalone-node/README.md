@@ -72,7 +72,8 @@ nesting display objects inside a `<group>` is reported as invalid.
 `export_strings` returns experimental TranslationHelper-compatible XML; optional
 `output` writes a new file and never overwrites one. The tested subset covers
 text and prompts, text gears, Button/Label titles, ComboBox and list titles,
-and tooltips; it filters values without Unicode letters. A real editor export
+and tooltips; its filter follows the editor behavior observed for ASCII
+punctuation, letters, symbols and non-ASCII characters. A real editor export
 of the Cocos sample matches all 233 keys and values. Other localization fields
 and the editor’s complete filtering behavior remain unverified, so review the
 result before using it as a complete translation catalog.
