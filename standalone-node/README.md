@@ -7,7 +7,7 @@ must include `project`, either a project directory or its `.fairy` file. The
 server accepts loopback requests only. `node mcp-server.mjs` provides MCP over
 stdio instead.
 
-The CLI accepts a tool name and a JSON object, or `@path` to a UTF-8 JSON file:
+The CLI accepts a tool name and a JSON object, or `@path` to a UTF-8 JSON file (with or without a BOM):
 `node fgui.mjs list_packages @args.json`. Discover MCP input schemas with
 `tools/list`; MCP calls are checked against those schemas before execution.
 For edits, read the component first and pass its `sha256` as
