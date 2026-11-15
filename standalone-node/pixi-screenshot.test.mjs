@@ -710,3 +710,11 @@ test('PIXI applies immediate image color and movieclip animation actions',{skip:
   await fs.writeFile(file,'<component size="50,50"><displayList><graph id="g" xy="0,0" size="20,20" type="rect"/></displayList><transition name="bad" autoPlay="true"><item time="0" type="Color" target="g" value="#ff0000"/></transition></component>');const rejected=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:50,height:50,settle_ms:0}}});assert.equal(rejected.result.isError,true);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI renders color tween actions on images',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-color-tween-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/><image id="img" name="White.png" path="/"/></resources><publish name="Demo"/></packageDescription>');await sharp({create:{width:30,height:30,channels:4,background:'#ffffff'}}).png().toFile(path.join(dir,'White.png'));
+  const file=path.join(dir,'Main.xml'),source='<component size="30,30"><displayList><image id="i" src="img" xy="0,0"/></displayList><transition name="tint" autoPlay="true"><item time="0" type="Color" target="i" tween="true" startValue="#ff0000" endValue="#00ff00" duration="24" ease="Linear"/></transition></component>';await fs.writeFile(file,source);const result=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:30,height:30,settle_ms:5000}}});assert.equal(result.result.isError,false,result.result.content[0].text);const pixels=await sharp(Buffer.from(result.result.content[1].data,'base64')).removeAlpha().raw().toBuffer(),color=[...pixels.subarray((15*30+15)*3,(15*30+15)*3+3)];assert.ok(color[1]>180&&color[0]<80,JSON.stringify(color));assert.equal(await fs.readFile(file,'utf8'),source);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

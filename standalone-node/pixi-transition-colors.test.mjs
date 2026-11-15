@@ -1,0 +1,4 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {installPreviewTransitionColors} from './pixi-transition-colors.mjs';
+test('preview color tween interpolates RGB channels and reverses correctly',()=>{
+ function Transition(){}let applied;Transition.prototype.prepareValue=function(){return 'original';};Transition.prototype.applyValue=function(item,value){applied=value.c;};installPreviewTransitionColors({Transition});const instance=new Transition(),item={type:6,tween:true,startValue:{c:0xff0000},endValue:{c:0x00ff80},value:{}},to={};instance.prepareValue(item,to,false);assert.deepEqual(item.value,{f1:255,f2:0,f3:0});assert.deepEqual(to,{f1:0,f2:255,f3:128});instance.applyValue(item,{f1:127.5,f2:127.5,f3:64});assert.equal(applied,0x7f7f40);instance.prepareValue(item,to,true);assert.deepEqual(item.value,{f1:0,f2:255,f3:128});assert.deepEqual(to,{f1:255,f2:0,f3:0});assert.equal(instance.prepareValue({type:0},{}),'original');
+});
