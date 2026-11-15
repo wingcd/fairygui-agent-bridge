@@ -23,7 +23,7 @@ export function createServer() {
       let parsed;
       try { parsed = JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(parts))); }
       catch { return reply(400,{jsonrpc:'2.0',id:null,error:{code:-32700,message:'Parse error'}}); }
-      if (viewerRequest && (Array.isArray(parsed) || parsed?.method !== 'tools/call' || !['screenshot','list_packages','list_items','list_controllers'].includes(parsed?.params?.name))) return reply(403,{error:'viewer only accepts preview and listing calls'});
+      if (viewerRequest && (Array.isArray(parsed) || parsed?.method !== 'tools/call' || !['screenshot','list_packages','list_items','list_controllers','list_children'].includes(parsed?.params?.name))) return reply(403,{error:'viewer only accepts preview and listing calls'});
       if (Array.isArray(parsed)) {
         if (req.url !== '/mcp' || !parsed.length || parsed.length > 100 || parsed.some(item => item?.method === 'initialize')) return reply(400,{jsonrpc:'2.0',id:null,error:{code:-32600,message:'Invalid batch'}});
         const responses = (await Promise.all(parsed.map(item => message(item,version)))).filter(Boolean);
