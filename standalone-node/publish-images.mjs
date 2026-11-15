@@ -24,10 +24,13 @@ const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 function previewPrompt(value){return !/[\[\]<>]/.test(value)||/^(?:\[color=#[0-9a-fA-F]{6}\][^\[\]<>]*\[\/color\]|\[i\]\[color=#[0-9a-fA-F]{6}\][^\[\]<>]*\[\/color\]\[\/i\])$/.test(value);}
 // The legacy PIXI runtime can execute this transition shape directly.
 function previewLinearTransition(node){
- if(attr(node,'autoPlay')!=='true'||children(node).length!==1||Array.from(node.attributes).some(a=>!['name','autoPlay','autoPlayRepeat'].includes(a.name)))return false;
- const item=children(node)[0],allowed=['time','type','target','tween','startValue','endValue','duration','ease'];
- const type=attr(item,'type'),numeric=value=>/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())&&Number.isFinite(Number(value)),validValue=value=>{if(value===null)return false;const parts=value.split(',');if(type==='XY')return parts.length===2&&parts.every(numeric);if(parts.length!==1||!numeric(value))return false;if(type==='Alpha')return Number(value)>=0&&Number(value)<=1;return type==='Rotation'&&/^[+-]?\d+$/.test(value.trim());};
- return item.tagName==='item'&&Array.from(item.attributes).every(a=>allowed.includes(a.name))&&['Rotation','XY','Alpha'].includes(type)&&attr(item,'tween')==='true'&&!!attr(item,'target')&&/^\d+$/.test(attr(item,'time')??'')&&/^[1-9]\d*$/.test(attr(item,'duration')??'')&&['startValue','endValue'].every(k=>validValue(attr(item,k)))&&(attr(item,'ease')??'Linear')==='Linear'&&children(item).length===0;
+ const items=children(node);
+ if(attr(node,'autoPlay')!=='true'||items.length===0||Array.from(node.attributes).some(a=>!['name','autoPlay','autoPlayRepeat'].includes(a.name)))return false;
+ return items.every(item=>{
+  const allowed=['time','type','target','tween','startValue','endValue','duration','ease'];
+  const type=attr(item,'type'),numeric=value=>/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())&&Number.isFinite(Number(value)),validValue=value=>{if(value===null)return false;const parts=value.split(',');if(type==='XY')return parts.length===2&&parts.every(numeric);if(parts.length!==1||!numeric(value))return false;if(type==='Alpha')return Number(value)>=0&&Number(value)<=1;return type==='Rotation'&&/^[+-]?\d+$/.test(value.trim());};
+  return item.tagName==='item'&&Array.from(item.attributes).every(a=>allowed.includes(a.name))&&['Rotation','XY','Alpha'].includes(type)&&attr(item,'tween')==='true'&&!!attr(item,'target')&&/^\d+$/.test(attr(item,'time')??'')&&/^[1-9]\d*$/.test(attr(item,'duration')??'')&&['startValue','endValue'].every(k=>validValue(attr(item,k)))&&(attr(item,'ease')??'Linear')==='Linear'&&children(item).length===0;
+ });
 }
 export async function publishImages(args, {allowSounds=false,allowComponents=false,preselectedClosure=null,recordSource=null,legacyPreview=false,previewDefaultScrollbars=false} = {}) {
   if(process.platform!=='win32') throw new Error('publication requires a no-replace directory rename, currently supported only on Windows');

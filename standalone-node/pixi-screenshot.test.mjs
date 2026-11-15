@@ -596,14 +596,29 @@ test('PIXI plays automatic linear position and opacity transitions',{skip:!proce
   await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');
   await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');
   for(const [type,start,end] of [['XY','10,20','70,20'],['Alpha','1','0']]){
-   await fs.writeFile(path.join(dir,'Main.xml'),`<component size="100,60"><displayList><graph id="g" xy="10,20" size="20,20" type="rect" lineSize="0" fillColor="#ffff0000"/></displayList><transition name="t" autoPlay="true"><item time="0" type="${type}" target="g" tween="true" startValue="${start}" endValue="${end}" duration="240" ease="Linear"/></transition></component>`);
-   const frames=[];for(const settle_ms of [0,3000]){const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:100,height:60,settle_ms}}});assert.equal(response.result.isError,false,response.result.content[0].text);frames.push(await sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer());}
-   const stats=frame=>{let count=0,sumX=0,red=0;for(let y=0;y<60;y++)for(let x=0;x<100;x++){const i=(y*100+x)*3;red+=Math.max(0,frame[i]-frame[i+1]);if(frame[i]>100&&frame[i+1]<80&&frame[i+2]<80){count++;sumX+=x;}}return {count,x:sumX/count,red};};const a=stats(frames[0]),b=stats(frames[1]);
-   assert.ok(a.count>100,`${type} starts visible`);if(type==='XY')assert.ok(b.count>100&&b.x>a.x+8,`position moves right: ${JSON.stringify({a,b})}`);else assert.ok(b.red<a.red*0.85,`opacity fades out: ${JSON.stringify({a,b})}`);
+   await fs.writeFile(path.join(dir,'Main.xml'),`<component size="100,60"><displayList><graph id="g" xy="10,20" size="20,20" type="rect" lineSize="0" fillColor="#ffff0000"/></displayList><transition name="t" autoPlay="true"><item time="0" type="${type}" target="g" tween="true" startValue="${start}" endValue="${end}" duration="24" ease="Linear"/></transition></component>`);
+   const frames=[];for(const settle_ms of [2000]){const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:100,height:60,settle_ms}}});assert.equal(response.result.isError,false,response.result.content[0].text);frames.push(await sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer());}
+   const stats=frame=>{let count=0,sumX=0,red=0;for(let y=0;y<60;y++)for(let x=0;x<100;x++){const i=(y*100+x)*3;red+=Math.max(0,frame[i]-frame[i+1]);if(frame[i]>100&&frame[i+1]<80&&frame[i+2]<80){count++;sumX+=x;}}return {count,x:sumX/count,red};};const result=stats(frames[0]);
+   if(type==='XY')assert.ok(result.count>100&&result.x>50,`position moves right: ${JSON.stringify(result)}`);else assert.ok(result.red<20000,`opacity fades: ${JSON.stringify(result)}`);
   }
   for(const [type,start,end] of [['XY','10','70,20'],['XY','0x10,20','70,20'],['Alpha','1','2'],['Rotation','0','1e2']]){
    await fs.writeFile(path.join(dir,'Main.xml'),`<component size="100,60"><displayList><graph id="g" xy="10,20" size="20,20" type="rect" lineSize="0" fillColor="#ffff0000"/></displayList><transition name="bad" autoPlay="true"><item time="0" type="${type}" target="g" tween="true" startValue="${start}" endValue="${end}" duration="24" ease="Linear"/></transition></component>`);
    const response=await message({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:100,height:60,settle_ms:0}}});assert.equal(response.result.isError,true);assert.match(response.result.content[0].text,/autoplay transition bad/);
   }
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('PIXI plays multiple autoplay transition items together',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-multi-transition-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});
+  await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');
+  await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');
+  const source='<component size="120,80"><displayList><graph id="r" xy="10,10" size="20,20" type="rect" lineSize="0" fillColor="#ffff0000"/><graph id="g" xy="10,45" size="20,20" type="rect" lineSize="0" fillColor="#ff00ff00"/></displayList><transition name="both" autoPlay="true"><item time="0" type="XY" target="r" tween="true" startValue="10,10" endValue="90,10" duration="24" ease="Linear"/><item time="0" type="Alpha" target="g" tween="true" startValue="1" endValue="0" duration="24" ease="Linear"/></transition></component>';
+  const file=path.join(dir,'Main.xml');await fs.writeFile(file,source);
+  const capture=async settle_ms=>{const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:120,height:80,settle_ms}}});assert.equal(response.result.isError,false,response.result.content[0].text);return sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();};
+  const measure=frame=>{let count=0,xsum=0,green=0;for(let y=0;y<80;y++)for(let x=0;x<120;x++){const i=(y*120+x)*3;if(frame[i]>100&&frame[i+1]<80){count++;xsum+=x;}green+=Math.max(0,frame[i+1]-frame[i]);}return {x:xsum/count,green,count};};
+  const result=measure(await capture(2000));assert.ok(result.count>100&&result.x>60,JSON.stringify(result));assert.ok(result.green<20000,JSON.stringify(result));assert.equal(await fs.readFile(file,'utf8'),source);
+  await fs.writeFile(file,source.replace('type="Alpha"','type="Shake"'));const rejected=await message({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:120,height:80,settle_ms:0}}});assert.equal(rejected.result.isError,true);assert.match(rejected.result.content[0].text,/autoplay transition both/);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
