@@ -308,7 +308,7 @@ they do not measure writes, publication, or screenshot builds.
 
 The default `screenshot` renderer (`renderer: "pixi"`) uses the community
 FairyGUI PixiJS runtime and Chrome directly, without Cocos Creator. It currently
-detects Chrome in common installation locations; `chrome` or `FGUI_CHROME`
+detects Chrome and, on Windows, Edge in common installation locations; `chrome` or `FGUI_CHROME`
 can select a different executable. It currently
 uses a restricted legacy XML preview subset, including simple nested Button and Label
 components and styled text including outline and shadows; unsupported features are rejected. Only the requested component and
