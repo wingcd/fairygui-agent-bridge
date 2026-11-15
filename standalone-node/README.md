@@ -365,7 +365,7 @@ for the tested glyph and tint settings.
 Automatic rotation, position, opacity, size, scale, color and visibility transitions with
 supported immediate actions (including image/movieclip tint and movieclip frame) and
 tween items, including repeat, yoyo, component-owner targets and Linear, Quad,
-Cubic, Quart, Quint, Sine, Circ and Expo easing, and
+Cubic, Quart, Quint, Sine, Circ, Expo, Back, Bounce and Elastic easing, and
 pull-to-refresh header/footer resources, are supported for the shapes exercised
 by the preview tests; other autoplay transitions remain unsupported.
 Tree previews initialize the expanded nodes, indentation, leaf controllers and

@@ -34,7 +34,7 @@ function previewLinearTransition(node){
   if(tween==='false'){return Array.from(item.attributes).every(a=>['time','type','target','tween','value'].includes(a.name))&&validValue(attr(item,'value'));}
   if(tween!=='true'||['Visible','Animation'].includes(type))return false;
   const allowed=['time','type','target','tween','startValue','endValue','duration','ease','repeat','yoyo'];
-  return Array.from(item.attributes).every(a=>allowed.includes(a.name))&&/^(?:-1|\d+)$/.test(attr(item,'repeat')??'0')&&Number(attr(item,'repeat')??'0')<=2147483647&&['true','false'].includes(attr(item,'yoyo')??'false')&&/^[1-9]\d*$/.test(attr(item,'duration')??'')&&['startValue','endValue'].every(k=>validValue(attr(item,k)))&&['Linear',...['Quad','Cubic','Quart','Quint','Sine','Circ','Expo'].flatMap(f=>['In','Out','InOut'].map(d=>f+'.'+d))].includes(attr(item,'ease')??'Quad.Out');
+  return Array.from(item.attributes).every(a=>allowed.includes(a.name))&&/^(?:-1|\d+)$/.test(attr(item,'repeat')??'0')&&Number(attr(item,'repeat')??'0')<=2147483647&&['true','false'].includes(attr(item,'yoyo')??'false')&&/^[1-9]\d*$/.test(attr(item,'duration')??'')&&['startValue','endValue'].every(k=>validValue(attr(item,k)))&&['Linear',...['Quad','Cubic','Quart','Quint','Sine','Circ','Expo','Back','Bounce','Elastic'].flatMap(f=>['In','Out','InOut'].map(d=>f+'.'+d))].includes(attr(item,'ease')??'Quad.Out');
  });
 }
 export async function publishImages(args, {allowSounds=false,allowComponents=false,preselectedClosure=null,recordSource=null,legacyPreview=false,previewDefaultScrollbars=false} = {}) {
