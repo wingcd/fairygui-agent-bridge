@@ -352,8 +352,8 @@ JTA movieclip frames are packed into preview atlases and can be played or select
 Static grayed objects use the PIXI runtime's grayscale filter.
 Bitmap fonts backed by individual image glyphs or a single texture are supported
 for the tested glyph and tint settings.
-Automatic rotation, position, opacity, size and scale transitions with supported
-tween items, including repeat, yoyo, component-owner targets and Linear, Quad,
+Automatic rotation, position, opacity, size, scale and visibility transitions with
+supported immediate actions and tween items, including repeat, yoyo, component-owner targets and Linear, Quad,
 Cubic, Quart, Quint, Sine, Circ and Expo easing, and
 pull-to-refresh header/footer resources, are supported for the shapes exercised
 by the preview tests; other autoplay transitions remain unsupported.
