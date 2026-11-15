@@ -12,11 +12,13 @@ export async function exportStrings(args){
  for(const pkg of initial){
   const packageFile=path.join(pkg.folder,'package.xml');pkg.tree=parse(await read(packageFile),packageFile);if(pkg.tree.tagName!=='packageDescription')throw new Error('invalid package root: '+packageFile);
   const packageId=attr(pkg.tree,'id');if(!packageId)throw new Error('package id is missing');
-  for(const item of resources(pkg.tree)){
+  const items=resources(pkg.tree).filter(item=>item.tagName==='component').sort((a,b)=>{const x=(attr(a,'path')||'/').split('/').filter(Boolean),y=(attr(b,'path')||'/').split('/').filter(Boolean);for(let i=0;i<Math.max(x.length,y.length);i++){if(i>=x.length)return -1;if(i>=y.length)return 1;if(x[i]!==y[i])return x[i]<y[i]?-1:1;}const an=(attr(a,'name')||''),bn=(attr(b,'name')||'');return an<bn?-1:an>bn?1:0;});
+  for(const item of items){
    if(item.tagName!=='component')continue;const id=attr(item,'id');if(!id)throw new Error('component id is missing');
    const file=componentPath(pkg.folder,item),component=parse(await read(file),file);if(component.tagName!=='component')throw new Error('invalid component root: '+file);
    for(const object of children(children(component,'displayList')[0])){
     const childId=attr(object,'id');if(!childId)throw new Error('display object id is missing: '+file);const key=packageId+id+'-'+childId,label=attr(object,'name')||childId;
+    add(key+'-tips',attr(object,'tooltips'),label);
     if(['text','richtext'].includes(object.tagName)){
      add(key,attr(object,'text'),label);add(key+'-prompt',attr(object,'prompt'),label);
      for(const gear of children(object,'gearText')){for(const [i,value] of (attr(gear,'values')??'').split('|').entries())add(key+'-texts_'+i,value,label);add(key+'-texts_def',attr(gear,'default'),label);}
@@ -26,7 +28,6 @@ export async function exportStrings(args){
      for(const combo of children(object,'ComboBox'))for(const [i,entry] of children(combo,'item').entries())add(key+'-'+i,attr(entry,'title'),label);
     }
     if(object.tagName==='list')for(const [i,entry] of children(object,'item').entries()){add(key+'-'+i,attr(entry,'title'),label);add(key+'-'+i+'-0',attr(entry,'selectedTitle'),label);}
-    add(key+'-tips',attr(object,'tooltips'),label);
    }
   }
  }
