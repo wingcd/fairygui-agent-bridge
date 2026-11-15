@@ -69,6 +69,13 @@ objects must include a valid `xy` position, which the editor requires.
 `set_properties` also edits group advanced mode, layout, gaps, visibility exclusion, auto-size and main-grid index. Disabling advanced mode makes the group editor-only.
 Use `set_properties` with `group` set to a sibling group ID to assign membership, or null to clear it. Group members must be sibling display-list objects;
 nesting display objects inside a `<group>` is reported as invalid.
+`export_strings` returns experimental TranslationHelper-compatible XML; optional
+`output` writes a new file and never overwrites one. The tested subset covers
+text and prompts, text gears, Button/Label titles, ComboBox and list titles,
+and tooltips; it filters values without Unicode letters. A real editor export
+of the Cocos sample matches all 233 keys and values. Other localization fields
+and the editor’s complete filtering behavior remain unverified, so review the
+result before using it as a complete translation catalog.
 `find_references` scans registered component references, supported UI URLs,
 project settings and same-package bitmap fonts; its `complete` flag reports
 scan errors, while dynamic references remain outside its scope.
