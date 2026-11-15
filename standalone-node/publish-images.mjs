@@ -27,9 +27,9 @@ function previewLinearTransition(node){
  const items=children(node);
  if(attr(node,'autoPlay')!=='true'||items.length===0||Array.from(node.attributes).some(a=>!['name','autoPlay','autoPlayRepeat'].includes(a.name)))return false;
  return items.every(item=>{
-  const allowed=['time','type','target','tween','startValue','endValue','duration','ease'];
+  const allowed=['time','type','target','tween','startValue','endValue','duration','ease','repeat','yoyo'];
   const type=attr(item,'type'),numeric=value=>/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())&&Number.isFinite(Number(value)),validValue=value=>{if(value===null)return false;const parts=value.split(',');if(['XY','Size','Scale'].includes(type))return parts.length===2&&parts.every(numeric)&&(type!=='Size'||parts.every(part=>Number(part)>=0));if(parts.length!==1||!numeric(value))return false;if(type==='Alpha')return Number(value)>=0&&Number(value)<=1;return type==='Rotation'&&/^[+-]?\d+$/.test(value.trim());};
-  return item.tagName==='item'&&Array.from(item.attributes).every(a=>allowed.includes(a.name))&&['Rotation','XY','Alpha','Size','Scale'].includes(type)&&attr(item,'tween')==='true'&&!!attr(item,'target')&&/^\d+$/.test(attr(item,'time')??'')&&/^[1-9]\d*$/.test(attr(item,'duration')??'')&&['startValue','endValue'].every(k=>validValue(attr(item,k)))&&(attr(item,'ease')??'Linear')==='Linear'&&children(item).length===0;
+  return item.tagName==='item'&&Array.from(item.attributes).every(a=>allowed.includes(a.name))&&['Rotation','XY','Alpha','Size','Scale'].includes(type)&&attr(item,'tween')==='true'&&/^(?:-1|\d+)$/.test(attr(item,'repeat')??'0')&&Number(attr(item,'repeat')??'0')<=2147483647&&['true','false'].includes(attr(item,'yoyo')??'false')&&/^\d+$/.test(attr(item,'time')??'')&&/^[1-9]\d*$/.test(attr(item,'duration')??'')&&['startValue','endValue'].every(k=>validValue(attr(item,k)))&&(attr(item,'ease')??'Linear')==='Linear'&&children(item).length===0;
  });
 }
 export async function publishImages(args, {allowSounds=false,allowComponents=false,preselectedClosure=null,recordSource=null,legacyPreview=false,previewDefaultScrollbars=false} = {}) {

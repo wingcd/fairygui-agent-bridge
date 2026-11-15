@@ -667,3 +667,16 @@ test('PIXI screenshot selects nested instance controller pages',{skip:!process.e
   assert.equal(await fs.readFile(path.join(dir,'Main.xml'),'utf8'),main);assert.equal(await fs.readFile(path.join(dir,'Child.xml'),'utf8'),child);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI plays repeated yoyo and owner-target autoplay transitions',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:120000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-yoyo-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');
+  const file=path.join(dir,'Main.xml'),capture=async source=>{await fs.writeFile(file,source);const result=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:100,height:70,settle_ms:4000}}});assert.equal(result.result.isError,false,result.result.content[0].text);return sharp(Buffer.from(result.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();};
+  for(const [yoyo,expected] of [['true',20],['false',80]]){
+   const source=`<component size="100,70"><displayList><graph id="g" xy="10,20" size="20,20" type="rect" lineSize="0" fillColor="#ffff0000"/></displayList><transition name="move" autoPlay="true"><item time="0" type="XY" target="g" tween="true" startValue="10,20" endValue="70,20" duration="12" repeat="1" yoyo="${yoyo}" ease="Linear"/></transition></component>`,pixels=await capture(source);let count=0,sum=0;for(let y=0;y<70;y++)for(let x=0;x<100;x++){const i=(y*100+x)*3;if(pixels[i]>150&&pixels[i+1]<80){count++;sum+=x;}}assert.ok(count>100&&Math.abs(sum/count-expected)<8,`${yoyo}: ${sum/count}`);
+  }
+  const owner='<component size="100,70"><displayList><graph id="g" xy="10,10" size="10,10" type="rect" lineSize="0" fillColor="#ffff0000"/></displayList><transition name="grow" autoPlay="true"><item time="0" type="Scale" tween="true" startValue="1,1" endValue="3,3" duration="12" ease="Linear"/></transition></component>',pixels=await capture(owner);let red=0;for(let i=0;i<pixels.length;i+=3)if(pixels[i]>150&&pixels[i+1]<80)red++;assert.ok(red>500,`owner scale visibly grows the child: ${red}`);assert.equal(await fs.readFile(file,'utf8'),owner);
+  const bad=owner.replace('duration="12"','duration="12" repeat="-2"');await fs.writeFile(file,bad);const rejected=await message({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:100,height:70,settle_ms:0}}});assert.equal(rejected.result.isError,true);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
