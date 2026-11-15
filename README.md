@@ -34,6 +34,7 @@ node fgui.mjs list_packages '{"project":"D:/work/my-ui-project"}'
 node audit-screenshots.mjs D:/work/my-ui-project
 ```
 
+默认逐个检查；可添加 `--concurrency=2` 并行检查（支持 1–4，会增加资源占用）。并行时结果按完成顺序输出。
 检查结果逐行输出 JSON，失败时返回非零退出码。截图使用的 Pixi 预览仍有
 功能与排版限制，生成图片不等同于验证与编辑器逐像素一致。
 

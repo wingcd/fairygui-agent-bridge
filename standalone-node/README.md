@@ -223,7 +223,9 @@ and every logged error is the known Babel large-file deoptimization note.
 
 To audit all registered components with the Pixi screenshot path, run
 `node audit-screenshots.mjs PROJECT`. It emits one JSON record per component and
-a final count; any failed screenshot produces a nonzero exit status. This checks
+a final count; any failed screenshot produces a nonzero exit status. The default
+is one worker; append `--concurrency=2` to use two workers (supported range 1–4,
+with higher resource usage). Concurrent records appear in completion order. This checks
 whether an image can be produced, not pixel equivalence with the editor.
 
 ## Experimental component screenshot
