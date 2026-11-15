@@ -325,8 +325,9 @@ pages and select them. Invalid names or page IDs fail the request, and cache
 entries are isolated by the selected pages. For a nested component instance, use
 `controller_overrides: [{"path":["childId"],"controller":"state","page":"pageId"}]`;
 the path contains display-list child IDs from the root to the instance. The viewer
-loads root and nested instance controllers (up to 128 instances). Duplicate
-overrides are rejected. Cocos screenshots do not yet accept these overrides. Binary runtime
+loads root and nested instance controllers (up to 128 instances). Controller
+tree loading is covered for all 16 Cocos sample `Main` components; this checks
+discovery, not every page or visual state. Duplicate overrides are rejected. Cocos screenshots do not yet accept these overrides. Binary runtime
 publication currently starts controllers on their published home page instead. The Cocos renderer
 is available explicitly for projects outside the PIXI preview subset. PIXI
 mode supports `reuse_screenshot` with content-based invalidation and coalesces
