@@ -639,3 +639,18 @@ test('PIXI plays automatic size and scale transitions',{skip:!process.env.FGUI_C
   const bad=await message({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:100,height:100,settle_ms:0}}});assert.equal(bad.result.isError,true);assert.match(bad.result.content[0].text,/autoplay transition bad/);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI screenshot selects root controller pages without modifying the project',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-controller-pages-'));
+ try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});
+  await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');
+  await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');
+  const source='<component size="30,30"><controller name="state" pages="a,A,b,B" selected="0"/><displayList><graph id="red" xy="0,0" size="30,30" type="rect" lineSize="0" fillColor="#ffff0000"><gearDisplay controller="state" pages="a"/></graph><graph id="green" xy="0,0" size="30,30" type="rect" lineSize="0" fillColor="#ff00ff00"><gearDisplay controller="state" pages="b"/></graph></displayList></component>';
+  const file=path.join(dir,'Main.xml');await fs.writeFile(file,source);
+  const call=controller_pages=>message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:30,height:30,settle_ms:0,reuse_screenshot:true,...(controller_pages?{controller_pages}:{})}}});
+  const capture=async pages=>{const response=await call(pages);assert.equal(response.result.isError,false,response.result.content[0].text);const pixels=await sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();return {color:[...pixels.subarray((15*30+15)*3,(15*30+15)*3+3)],data:JSON.parse(response.result.content[0].text).data};};
+  const normal=await capture(),other=await capture({state:'b'}),cached=await capture({state:'b'});assert.deepEqual(normal.color,[255,0,0]);assert.deepEqual(other.color,[0,255,0]);assert.deepEqual(cached.color,other.color);assert.equal(other.data.cached,false);assert.equal(cached.data.cached,true);assert.equal(await fs.readFile(file,'utf8'),source);
+  for(const pages of [{missing:'a'},{state:'missing'}]){const result=await call(pages);assert.equal(result.result.isError,true);assert.match(result.result.content[0].text,/controller.*not found/);}
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

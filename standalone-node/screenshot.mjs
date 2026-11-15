@@ -22,6 +22,7 @@ export async function screenshot(args) {
   args={renderer:'pixi',...args};
   for (const [key,env] of Object.entries({demo:'FGUI_COCOS_DEMO',distribution:'FGUI_COCOS_DISTRIBUTION',creator:'FGUI_COCOS_CREATOR',chrome:'FGUI_CHROME'})) args[key] ??= process.env[env] || undefined;
   if(args.renderer!==undefined&&!['cocos','pixi'].includes(args.renderer))throw new Error('invalid renderer');
+  if(args.controller_pages!==undefined&&(args.renderer!=='pixi'||!args.controller_pages||typeof args.controller_pages!=='object'||Array.isArray(args.controller_pages)||Object.entries(args.controller_pages).some(([name,id])=>!name||typeof id!=='string'||!id)))throw new Error('controller_pages requires a PIXI controller name to page ID object');
   if(args.renderer==='pixi'){
     args.chrome=await resolveChrome(args.chrome);
     if(args.reuse_screenshot!==undefined&&typeof args.reuse_screenshot!=='boolean')throw new Error('reuse_screenshot must be a boolean');
@@ -34,7 +35,7 @@ export async function screenshot(args) {
       const root=projectRoot(args.project),selectedProject=await fs.realpath(args.project),here=path.dirname(fileURLToPath(import.meta.url));
       fingerprint=async()=>{const descriptors=(await fs.readdir(root)).filter(isFairyDescriptorName).sort();
       const entries=[['assets',path.join(root,'assets')],['settings',path.join(root,'settings'),true],...descriptors.map(n=>['descriptor/'+n,path.join(root,n)]),['chrome',args.chrome],...['vendor/fairygui-pixi/fairygui.js','node_modules/pixi.js/dist/browser/pixi.min.js','node_modules/@createjs/tweenjs/dist/tweenjs.min.js','node_modules/zlibjs/bin/rawinflate.min.js','package-lock.json'].map(n=>['runtime/'+n,path.join(here,n)]),...(await fs.readdir(here)).filter(n=>n.endsWith('.mjs')&&!n.endsWith('.test.mjs')).sort().map(n=>['implementation/'+n,path.join(here,n)])];
-      return digestInputs(entries,{renderer:'pixi',root,selectedProject,pkg:args.pkg,name:args.name,width:args.width??1000,height:args.height??700,settle_ms:args.settle_ms??1000,chrome:path.resolve(args.chrome)});};
+      return digestInputs(entries,{renderer:'pixi',root,selectedProject,pkg:args.pkg,name:args.name,width:args.width??1000,height:args.height??700,settle_ms:args.settle_ms??1000,controller_pages:args.controller_pages??{},chrome:path.resolve(args.chrome)});};
       key=await fingerprint();const hit=pixiCache.get(key);if(hit){pixiCache.delete(key);pixiCache.set(key,hit);if(output)await fs.writeFile(output,hit.png,{flag:'wx'});return {output,package:hit.pkg,component:hit.component,width:hit.width,height:hit.height,renderer:'FairyGUI PIXI web runtime',experimental:true,cached:true,[screenshotBytes]:hit.png};}
     }
     const existing=key?pixiInflight.get(key):null;

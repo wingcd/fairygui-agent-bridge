@@ -318,7 +318,12 @@ its same-package dependencies are selected; referenced external packages still
 include their exported resources. The Cocos sample
 `MainMenu/Main` renders, but pixel comparison found differences from Cocos
 (mainly rendering and text); the two are not pixel-identical. The PIXI preview
-uses the controller `selected` page stored for the editor; binary runtime
+uses the controller `selected` page stored for the editor by default. Pass
+`controller_pages: {"controllerName": "pageId"}` to screenshot a different
+root controller state without editing the project; the viewer can load controller
+pages and select them. Invalid names or page IDs fail the request, and cache
+entries are isolated by the selected pages. Cocos screenshots do not yet accept
+this override. Binary runtime
 publication currently starts controllers on their published home page instead. The Cocos renderer
 is available explicitly for projects outside the PIXI preview subset. PIXI
 mode supports `reuse_screenshot` with content-based invalidation and coalesces
