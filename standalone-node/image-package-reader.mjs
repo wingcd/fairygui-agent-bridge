@@ -1,4 +1,8 @@
 import {readTransitionItemDetails} from './transition-item-reader.mjs';
+function readRelations(raw,start,limit){
+ let cursor=start;const take=n=>{const at=cursor;cursor+=n;if(cursor>limit)throw new Error('truncated relations');return at;},byte=()=>raw[take(1)],short=()=>raw.readInt16BE(take(2));
+ const count=byte(),relations=[];for(let i=0;i<count;i++){const target=short(),n=byte(),definitions=[];for(let j=0;j<n;j++)definitions.push({type:byte(),percent:Boolean(byte())});relations.push({target,definitions});}return relations;
+}
 // Strict reader for the supported package subset.
 export function inspectImagePackage(data) {
   let pos=0, strings=[];
@@ -62,6 +66,7 @@ export function inspectImagePackage(data) {
         }controllers.push({name:childRefs(raw.readUInt16BE(head)),pages,actions});controllerAt=end;
       }
       item.component.controllers=controllers;
+      const rootRelations=readRelations(raw,offsets[3],offsets[4]);if(rootRelations.length)item.component.relations=rootRelations;
       const childRecords=[];let at=offsets[2]+2;const sectionEnd=offsets[3];
       for(let j=0;j<item.component.childCount;j++){
         if(at+2>sectionEnd)throw new Error('truncated component child');const length=raw.readInt16BE(at);at+=2;const end=at+length;
@@ -96,6 +101,7 @@ export function inspectImagePackage(data) {
             if(gears.length)record.gears=gears;
           }
         }
+        if(blocks>3){const index=section=>shortOffsets?raw.readUInt16BE(at+2+section*2):raw.readInt32BE(at+2+section*4),relationOffset=index(3);if(relationOffset){const later=Array.from({length:blocks},(_,section)=>index(section)).filter(value=>value>relationOffset),limit=later.length?Math.min(end,at+Math.min(...later)):end;if(relationOffset<header||at+relationOffset>=limit)throw new Error('invalid child relation section');const relations=readRelations(raw,at+relationOffset,limit);if(relations.length)record.relations=relations;}}
         if([6,7,8].includes(record.type)){
           if(blocks<7)throw new Error('missing text sections');const index=section=>shortOffsets?raw.readUInt16BE(at+2+section*2):raw.readInt32BE(at+2+section*4),style=index(5),content=index(6),styleAt=at+style,textAt=at+content;
           if(style<header||content<header||styleAt+20>end||textAt+2>end)throw new Error('invalid text sections');

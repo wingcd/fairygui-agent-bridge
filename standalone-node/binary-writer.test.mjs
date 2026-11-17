@@ -23,7 +23,7 @@ test('basic component records match Python in both binary versions', () => {
     assert.equal(run.status,0,run.stderr);
     const result=encodeImagePackage('abcdefgh','Demo',images,pages,{components:selected,spriteTrim:trim});
     assert.equal(result.toString('hex'),run.stdout.trim());
-    const parsed=inspectImagePackage(result).items.filter(i=>i.type===3)[0].component;assert.equal(parsed.childCount,11);
+    const parsed=inspectImagePackage(result).items.filter(i=>i.type===3)[0].component;assert.equal(parsed.childCount,11);assert.deepEqual(parsed.relations,[{target:0,definitions:[{type:14,percent:false},{type:15,percent:false}]}]);assert.deepEqual(parsed.children[0].relations,[{target:-1,definitions:[{type:0,percent:false},{type:7,percent:false}]}]);
     const reference=spawnSync(process.env.PYTHON||'python',['-c','import json,sys;from published import inspect;d=inspect(bytes.fromhex(sys.stdin.read()));print(json.dumps([c.get("gears",[]) for c in next(x for x in d["items"] if x["id"]=="comp")["component"]["children"]]))'],{cwd,input:result.toString('hex'),encoding:'utf8',env:{...process.env,PYTHONIOENCODING:'utf-8'}});assert.equal(reference.status,0,reference.stderr);assert.deepEqual(parsed.children.map(child=>child.gears??[]),JSON.parse(reference.stdout));
   }
 });

@@ -199,3 +199,12 @@ test('published validation detects broken gear references without a source proje
   components[0].children[0].gears=[{type:'display2',controllerIndex:0,pages:['p0'],condition:2}];result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.error.includes('gear condition')));
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('published relation comparison detects changes to component and child layout',{skip:process.platform!=='win32'},async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-relations-compare-'));try{
+  const folder=path.join(root,'assets','Demo');fs.mkdirSync(folder,{recursive:true});fs.writeFileSync(path.join(root,'p.fairy'),'<projectDescription/>');fs.writeFileSync(path.join(folder,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/"/></resources><publish name="Demo"/></packageDescription>');
+  const source=path.join(folder,'Main.xml'),xml='<component size="100,80"><relation target="a" sidePair="width-width"/><displayList><text id="a" xy="0,0" text="One"><relation target="" sidePair="left-left,top-top"/></text><text id="b" xy="0,0" text="Two"><relation target="a" sidePair="right-right"/></text></displayList></component>';fs.writeFileSync(source,xml);
+  const result=await publishImages({project:root,pkg:'Demo',output:path.join(root,'out')},{allowSounds:true,allowComponents:true});let report=await validatePublished({project:root,file:result.file,compare_components:true});assert.equal(report.valid,true,JSON.stringify(report.issues));
+  for(const [from,to,expected] of [['width-width','height-height','component relations'],['left-left,top-top','left-right,top-top','child relations'],['target="a" sidePair="right-right"','target="" sidePair="right-right"','child relations']]){fs.writeFileSync(source,xml.replace(from,to));report=await validatePublished({project:root,file:result.file,compare_components:true});assert.ok(report.issues.some(issue=>issue.error.includes(expected)),from);}
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
