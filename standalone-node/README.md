@@ -184,7 +184,7 @@ finds an unresolved reference in HitTest `component1.xml`. A successful sample
 publication therefore does not imply that source validation returns `valid: true`;
 publication warns for the supported cases that match editor behavior.
 
-Run `npm test`. The test suite uses the official MCP SDK to exercise both
+Run `npm test`. Test files run serially to avoid competing browser and sample-build processes causing timeouts. The test suite uses the official MCP SDK to exercise both
 stdio and Streamable HTTP across multiple projects. Set `FGUI_SAMPLE_PROJECT` to the sample project's directory to
 also run the sample-based parity checks. Those checks do not establish full
 editor or runtime compatibility. Sample package tests exercise the compiled
