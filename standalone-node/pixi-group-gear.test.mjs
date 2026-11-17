@@ -6,7 +6,7 @@ import path from 'node:path';
 import sharp from 'sharp';
 import {message} from './mcp.mjs';
 
-test('PIXI group relayout follows size gear controller pages',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
+test('PIXI group relayout follows size gears and size transitions',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-group-gear-'));
  try{
   const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});
@@ -29,5 +29,17 @@ test('PIXI group relayout follows size gear controller pages',{skip:!process.env
   assert.equal(result.result.isError,false,result.result.content[0].text);
   const pixels=await sharp(Buffer.from(result.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();
   assert.deepEqual([...pixels.subarray((47*100+15)*3,(47*100+15)*3+3)],[0,255,0]);
+  const animated=xml.replace('<gearSize controller="state" pages="a,b" values="10,10|30,10"/>','').replace('</component>','<transition name="resize" autoPlay="true"><item time="0" type="Size" target="a" tween="false" value="30,10"/></transition></component>');
+  await fs.writeFile(path.join(dir,'Main.xml'),animated);
+  const frame=await message({jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:100,height:50,settle_ms:200}}});
+  assert.equal(frame.result.isError,false,frame.result.content[0].text);
+  const animationPixels=await sharp(Buffer.from(frame.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();
+  assert.deepEqual([...animationPixels.subarray((15*100+47)*3,(15*100+47)*3+3)],[0,255,0]);
+  const tweened=animated.replace('tween="false" value="30,10"','tween="true" startValue="10,10" endValue="30,10" duration="4" ease="Linear"');
+  await fs.writeFile(path.join(dir,'Main.xml'),tweened);
+  const tweenFrame=await message({jsonrpc:'2.0',id:4,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:100,height:50,settle_ms:700}}});
+  assert.equal(tweenFrame.result.isError,false,tweenFrame.result.content[0].text);
+  const tweenPixels=await sharp(Buffer.from(tweenFrame.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();
+  assert.deepEqual([...tweenPixels.subarray((15*100+47)*3,(15*100+47)*3+3)],[0,255,0]);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
