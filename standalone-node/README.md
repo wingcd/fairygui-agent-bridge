@@ -329,7 +329,7 @@ FairyGUI PixiJS runtime and Chrome directly, without Cocos Creator. It currently
 detects Chrome and, on Windows, Edge in common installation locations; `chrome` or `FGUI_CHROME`
 can select a different executable. It currently
 uses a restricted legacy XML preview subset, including simple nested Button and Label
-components and styled text including outline and shadows; unsupported features are rejected. Only the requested component and
+components, native `inputtext` and `text input="true"` fields, and styled text including outline and shadows; unsupported features are rejected. Only the requested component and
 its same-package dependencies are selected; referenced external packages still
 include their exported resources. The Cocos sample
 `MainMenu/Main` renders, but pixel comparison found differences from Cocos
