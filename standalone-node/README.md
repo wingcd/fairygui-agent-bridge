@@ -344,7 +344,9 @@ discovery, not every page or visual state. Duplicate overrides are rejected. Coc
 publication currently starts controllers on their published home page instead. The Cocos renderer
 is available explicitly for projects outside the PIXI preview subset. PIXI
 mode supports `reuse_screenshot` with content-based invalidation and coalesces
-concurrent requests for the same inputs; the viewer has a renderer selector.
+concurrent requests for the same inputs. Up to four Pixi renders run at once
+per service process; additional requests wait in arrival order. The viewer has a
+renderer selector.
 
 For the Cocos demo's 16 `Main` components, automated screenshot checks cover
 MainMenu, Joystick, ModalWaiting, HitTest, Basics, ListEffect, LoopList,

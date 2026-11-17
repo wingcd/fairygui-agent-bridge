@@ -10,6 +10,7 @@ import {execute,projectRoot,isFairyDescriptorName} from './project.mjs';
 import {inspectPublished} from './published.mjs';
 import {digestInputs} from './screenshot-cache.mjs';
 import {pixiScreenshot} from './pixi-screenshot.mjs';
+import {pixiRenderGate} from './render-gate.mjs';
 import {resolveChrome} from './browser-path.mjs';
 import {configurePreviewResolution} from './configure-preview.mjs';
 
@@ -42,7 +43,7 @@ export async function screenshot(args) {
       key=await fingerprint();const hit=pixiCache.get(key);if(hit){pixiCache.delete(key);pixiCache.set(key,hit);if(output)await fs.writeFile(output,hit.png,{flag:'wx'});return {output,package:hit.pkg,component:hit.component,width:hit.width,height:hit.height,renderer:'FairyGUI PIXI web runtime',experimental:true,cached:true,[screenshotBytes]:hit.png};}
     }
     const existing=key?pixiInflight.get(key):null;
-    const pending=existing??(async()=>{const rendered=await pixiScreenshot(args);if(key&&rendered.png.length<=8*1024*1024&&await fingerprint()===key){pixiCache.set(key,rendered);while(pixiCache.size>4)pixiCache.delete(pixiCache.keys().next().value);}return rendered;})();
+    const pending=existing??(async()=>{const rendered=await pixiRenderGate.run(()=>pixiScreenshot(args));if(key&&rendered.png.length<=8*1024*1024&&await fingerprint()===key){pixiCache.set(key,rendered);while(pixiCache.size>4)pixiCache.delete(pixiCache.keys().next().value);}return rendered;})();
     if(key&&!existing)pixiInflight.set(key,pending);
     let rendered;try{rendered=await pending;}finally{if(key&&!existing&&pixiInflight.get(key)===pending)pixiInflight.delete(key);}
     if(output)await fs.writeFile(output,rendered.png,{flag:'wx'});return {output,package:rendered.pkg,component:rendered.component,width:rendered.width,height:rendered.height,renderer:'FairyGUI PIXI web runtime',experimental:true,cached:!!existing,[screenshotBytes]:rendered.png};
