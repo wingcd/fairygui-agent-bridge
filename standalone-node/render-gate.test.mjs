@@ -16,3 +16,13 @@ test('HTTP health reports active and queued Pixi renders',async()=>{
  try{await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));for(let i=0;i<pixiRenderGate.limit+1;i++)jobs.push(pixiRenderGate.run(()=>new Promise(resolve=>resolvers.push(resolve))));await Promise.resolve();const response=await fetch(`http://127.0.0.1:${server.address().port}/health`),body=await response.json();assert.equal(body.ok,true);assert.deepEqual(body.pixi_renders,{limit:pixiRenderGate.limit,active:pixiRenderGate.limit,queued:1});}
  finally{while(resolvers.length){const resolve=resolvers.shift();resolve();await Promise.resolve();await Promise.resolve();}await Promise.all(jobs);await new Promise(resolve=>server.close(resolve));}
 });
+
+test('render gate removes cancelled waiting work without blocking later renders',async()=>{
+ const gate=new RenderGate(1),controller=new AbortController(),started=[];let release;const first=gate.run(()=>new Promise(resolve=>{release=resolve;}));await Promise.resolve();const cancelled=gate.run(()=>started.push('cancelled'),{signal:controller.signal}),next=gate.run(()=>started.push('next'));assert.equal(gate.waiting.length,2);controller.abort();await assert.rejects(cancelled,{name:'AbortError'});assert.equal(gate.waiting.length,1);release();await first;await next;assert.deepEqual(started,['next']);assert.equal(gate.active,0);
+});
+
+test('disconnected HTTP clients leave the uncached render queue',async()=>{
+ const {pixiRenderGate}=await import('./render-gate.mjs'),{createServer}=await import('./http-server.mjs');const server=createServer(),jobs=[],releases=[];const controller=new AbortController();
+ try{await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));for(let i=0;i<pixiRenderGate.limit;i++)jobs.push(pixiRenderGate.run(()=>new Promise(resolve=>releases.push(resolve))));await Promise.resolve();const request=fetch(`http://127.0.0.1:${server.address().port}/rpc`,{method:'POST',headers:{'content-type':'application/json'},signal:controller.signal,body:JSON.stringify({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:'unused',pkg:'unused',name:'unused',chrome:'unused'}}})}).catch(error=>error);const wait=async predicate=>{for(let i=0;i<300;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}throw new Error('queue did not reach expected state');};await wait(()=>pixiRenderGate.waiting.length===1);controller.abort();await request;await wait(()=>pixiRenderGate.waiting.length===0);}
+ finally{controller.abort();for(const release of releases)release();await Promise.all(jobs);server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
+});
