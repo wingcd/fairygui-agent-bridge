@@ -34,7 +34,8 @@ export async function exportStrings(args){
  const finalPackages=packages(root).map(pkg=>pkg.folder);if(finalPackages.length!==initial.length||finalPackages.some((folder,i)=>folder!==initial[i].folder))throw new Error('project packages changed during strings export');
  for(const [file,hash] of snapshot){let bytes;try{bytes=await fs.readFile(file);}catch{throw new Error('project source changed during strings export: '+file);}if(crypto.createHash('sha256').update(bytes).digest('hex')!==hash)throw new Error('project source changed during strings export: '+file);}
  const escape=value=>value.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
- const xml='<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'+rows.map(row=>'  <string name="'+escape(row.key)+'" mz="'+escape(row.label)+'">'+escape(row.value)+'</string>\n').join('')+'</resources>\n';
+ const escapeAttribute=value=>escape(value).replace(/\t/g,'&#9;').replace(/\n/g,'&#10;').replace(/\r/g,'&#13;');
+ const xml='<?xml version="1.0" encoding="utf-8"?>\n<resources>\n'+rows.map(row=>'  <string name="'+escapeAttribute(row.key)+'" mz="'+escapeAttribute(row.label)+'">'+escape(row.value)+'</string>\n').join('')+'</resources>\n';
  let output=null;if(args.output!==undefined){if(typeof args.output!=='string'||!args.output)throw new Error('output must be a nonempty path');output=path.resolve(args.output);await fs.writeFile(output,xml,{flag:'wx'});}
  return {xml,count:rows.length,output,experimental:true};
 }
