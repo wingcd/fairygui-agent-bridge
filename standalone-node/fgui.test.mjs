@@ -8,3 +8,7 @@ test('CLI rejects malformed UTF-8 JSON files',async()=>{
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-cli-invalid-'));
  try{const file=path.join(root,'args.json');await fs.writeFile(file,Buffer.concat([Buffer.from('{"project":"'),Buffer.from([0xff]),Buffer.from('"}')]));await assert.rejects(run(process.execPath,[script,'project_info','@'+file],{windowsHide:true}),error=>{const result=JSON.parse(error.stdout);assert.equal(error.code,1);assert.equal(result.ok,false);assert.match(result.error,/encoded data|encoding/i);return true;});}finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('CLI rejects unexpected arguments instead of silently ignoring them',async()=>{
+ await assert.rejects(run(process.execPath,[script,'project_info','{}','unexpected'],{windowsHide:true}),error=>{assert.equal(error.code,1);const result=JSON.parse(error.stdout);assert.equal(result.ok,false);assert.match(result.error,/usage:/);return true;});
+});

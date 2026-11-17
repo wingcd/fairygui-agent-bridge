@@ -3,8 +3,8 @@ import fs from 'node:fs';
 import {message} from './mcp.mjs';
 
 try {
-  const [command, raw] = process.argv.slice(2);
-  if (!command || !raw) throw new Error('usage: node fgui.mjs COMMAND JSON_OR_@FILE');
+  const [command, raw, ...extra] = process.argv.slice(2);
+  if (!command || !raw || extra.length) throw new Error('usage: node fgui.mjs COMMAND JSON_OR_@FILE');
   const input=raw.startsWith('@') ? new TextDecoder('utf-8',{fatal:true}).decode(fs.readFileSync(raw.slice(1))) : raw;
   const args=JSON.parse(input);
   if(command==='screenshot' && !args.output)throw new Error('CLI screenshot requires an output path');
