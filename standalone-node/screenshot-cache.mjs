@@ -6,12 +6,20 @@ import path from 'node:path';
 export async function digestInputs(entries,options) {
  const hash=crypto.createHash('sha256');
  hash.update(JSON.stringify(options));
- async function visit(file,relative) {
-  const stat=await fs.lstat(file);if(stat.isSymbolicLink())throw new Error('screenshot caching does not support symbolic links');
+ const canonical=value=>process.platform==='win32'?value.toLowerCase():value;
+ async function visit(file,relative,ancestors=new Set()) {
+  const stat=await fs.lstat(file);
+  if(stat.isSymbolicLink()){
+   const target=await fs.realpath(file);hash.update(JSON.stringify([relative,'link',target]));
+   await visit(target,relative+'/[link]',ancestors);
+   const after=await fs.lstat(file),resolved=await fs.realpath(file);if(!after.isSymbolicLink()||after.dev!==stat.dev||after.ino!==stat.ino||after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs||resolved!==target)throw new Error('screenshot cache link changed while hashing');
+   return;
+  }
   hash.update(JSON.stringify([relative,stat.isDirectory()?'directory':'file']));
   const unchanged=(a,b)=>a.isFile()&&b.isFile()&&!b.isSymbolicLink()&&a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
   if(stat.isDirectory()) {
-   const names=(await fs.readdir(file)).sort();for(const name of names)await visit(path.join(file,name),relative+'/'+name);
+   const real=canonical(await fs.realpath(file));if(ancestors.has(real))throw new Error('cyclic screenshot cache directory link');const next=new Set(ancestors);next.add(real);
+   const names=(await fs.readdir(file)).sort();for(const name of names)await visit(path.join(file,name),relative+'/'+name,next);
    // A newly added or removed dependency must not produce the same key as an
    // older directory snapshot. Check both identity and entries after traversal.
    const after=await fs.lstat(file),current=(await fs.readdir(file)).sort();

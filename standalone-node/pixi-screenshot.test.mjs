@@ -753,3 +753,12 @@ test('PIXI ignores editor component background color',{skip:!process.env.FGUI_CH
   const withBackground=await capture(source),withoutBackground=await capture(source.replace(' bgColorEnabled="true" bgColor="#ff0000"',''));assert.deepEqual(withBackground,withoutBackground);assert.ok(withBackground.some(value=>value>180),'rendered graph should be visible');
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI screenshot cache supports linked project settings',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async t=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-linked-settings-'));try{
+  const dir=path.join(root,'assets','Demo'),target=path.join(root,'settings-target');await fs.mkdir(dir,{recursive:true});await fs.mkdir(target);await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');await fs.writeFile(path.join(dir,'Main.xml'),'<component size="20,20"><displayList><graph id="g" xy="0,0" size="20,20" type="rect" lineSize="0" fillColor="#ffff0000"/></displayList></component>');await fs.writeFile(path.join(target,'custom.json'),'{}');
+  try{await fs.symlink(target,path.join(root,'settings'),'junction');}catch(error){if(['EPERM','EACCES','ENOTSUP'].includes(error.code)){t.skip('directory links unavailable');return;}throw error;}
+  const call=()=>message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',width:20,height:20,settle_ms:0,reuse_screenshot:true}}});const first=await call(),second=await call();assert.equal(first.result.isError,false,first.result.content[0].text);assert.equal(JSON.parse(first.result.content[0].text).data.cached,false);assert.equal(second.result.isError,false,second.result.content[0].text);assert.equal(JSON.parse(second.result.content[0].text).data.cached,true);
+  await fs.writeFile(path.join(target,'custom.json'),'{"changed":true}');const third=await call();assert.equal(third.result.isError,false,third.result.content[0].text);assert.equal(JSON.parse(third.result.content[0].text).data.cached,false);
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

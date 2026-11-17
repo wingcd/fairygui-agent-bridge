@@ -347,7 +347,7 @@ discovery, not every page or visual state. Duplicate overrides are rejected. Coc
 publication currently starts controllers on their published home page instead. The Cocos renderer
 is available explicitly for projects outside the PIXI preview subset. PIXI
 mode supports `reuse_screenshot` with content-based invalidation and coalesces
-concurrent requests for the same inputs. Large fingerprint inputs are read in bounded chunks to limit memory use. Up to four Pixi renders run at once
+concurrent requests for the same inputs. Large fingerprint inputs are read in bounded chunks to limit memory use. Linked inputs are followed and included in the fingerprint; cyclic links are rejected. Up to four Pixi renders run at once
 per service process; additional requests wait in arrival order. Set
 `FGUI_PIXI_CONCURRENCY` to 1–4 before starting the service to suit the host.
 The HTTP `/health` endpoint reports the configured limit and the current active
