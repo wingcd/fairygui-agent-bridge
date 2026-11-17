@@ -75,7 +75,8 @@ text and prompts, text gears on text and component instances, Button/Label title
 and Label prompts, ComboBox and list titles,
 and tooltips; its filter follows the editor behavior observed for ASCII
 punctuation, letters, symbols and non-ASCII characters. A real editor export
-of the Cocos sample matches all 233 keys, values, labels and their order. Other localization fields
+of the Cocos sample matches all 233 keys, values, labels, order and component
+comments. Other localization fields
 and the editor’s complete filtering behavior remain unverified, so review the
 result before using it as a complete translation catalog.
 `find_references` scans registered component references, supported UI URLs,
