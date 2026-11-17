@@ -140,7 +140,7 @@ Project publication and preflight default to exported resources and their
 transitive cross-package dependencies. Set `exported_only: false` to include
 all registered resources, including unused ones.
 
-`inspect_published` inspects the supported binary format and editor XML ZIP
+`inspect_published` inspects the supported binary format, including component gear records, and editor XML ZIP
 packages; `validate_published`
 checks atlas and sound files, sprite and media references, pixel mask
 dimensions and optional sprite overlap, with optional source image metadata

@@ -23,7 +23,8 @@ test('basic component records match Python in both binary versions', () => {
     assert.equal(run.status,0,run.stderr);
     const result=encodeImagePackage('abcdefgh','Demo',images,pages,{components:selected,spriteTrim:trim});
     assert.equal(result.toString('hex'),run.stdout.trim());
-    assert.equal(inspectImagePackage(result).items.filter(i=>i.type===3)[0].component.childCount,11);
+    const parsed=inspectImagePackage(result).items.filter(i=>i.type===3)[0].component;assert.equal(parsed.childCount,11);
+    const reference=spawnSync(process.env.PYTHON||'python',['-c','import json,sys;from published import inspect;d=inspect(bytes.fromhex(sys.stdin.read()));print(json.dumps([c.get("gears",[]) for c in next(x for x in d["items"] if x["id"]=="comp")["component"]["children"]]))'],{cwd,input:result.toString('hex'),encoding:'utf8',env:{...process.env,PYTHONIOENCODING:'utf-8'}});assert.equal(reference.status,0,reference.stderr);assert.deepEqual(parsed.children.map(child=>child.gears??[]),JSON.parse(reference.stdout));
   }
 });
 
@@ -77,4 +78,11 @@ test('list, tree and transition records match Python in both binary versions', (
 
 test('nested component pivot-as-anchor preserves the editor position',()=>{
  const components=[{id:'main',name:'Main',width:750,height:1334,children:[{type:'component',id:'start',src:'button',x:375,y:1069,size:[383,147],pivot:[0.5,0.5],anchor:true}]},{id:'button',name:'Button',width:383,height:147,children:[]}];const data=inspectImagePackage(encodeImagePackage('abcdefgh','Demo',[],[],{components}));const child=data.items.find(item=>item.id==='main').component.children[0];assert.equal(child.x,375);assert.equal(child.y,1069);assert.deepEqual(child.size,[383,147]);assert.deepEqual(child.pivot,[0.5,0.5,true]);assert.equal(child.x-child.size[0]*child.pivot[0],183.5);assert.equal(child.y-child.size[1]*child.pivot[1],995.5);
+});
+
+
+test('component reader rejects truncated gear records',()=>{
+ const components=[{id:'main',name:'Main',width:20,height:20,controllers:[{name:'state',pages:[['p0','normal']]}],children:[{type:'text',id:'t',x:0,y:0,text:'Hi',gears:[{type:'text',controllerIndex:0,pages:['p0'],values:['hello']}]}]}],data=encodeImagePackage('abcdefgh','Demo',[],[],{components});
+ const base=9+2+8+2+4+20,items=base+data.readInt32BE(base+6),record=items+2+4,raw=record+23,childList=raw+data.readInt32BE(raw+10),child=childList+4,gear=child+data.readInt32BE(child+10);assert.equal(inspectImagePackage(data).items[0].component.children[0].gears[0].values[0].value,'hello');
+ const bad=Buffer.from(data);bad.writeInt16BE(32767,gear+2);assert.throws(()=>inspectImagePackage(bad),/invalid gear size/);
 });

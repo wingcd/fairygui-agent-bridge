@@ -71,6 +71,31 @@ export function inspectImagePackage(data) {
         const record={type:raw[base],src:childRefs(raw.readUInt16BE(base+1)),pkg:childRefs(raw.readUInt16BE(base+3)),id:childRefs(raw.readUInt16BE(base+5)),name:childRefs(raw.readUInt16BE(base+7)),x:raw.readInt32BE(base+9),y:raw.readInt32BE(base+13)};let cursor=base+17;
         const take=n=>{const pos=cursor;cursor+=n;if(cursor>end)throw new Error('truncated component child properties');return pos;},byte=()=>raw[take(1)],int=()=>raw.readInt32BE(take(4)),float=()=>raw.readFloatBE(take(4));
         if(byte())record.size=[int(),int()];if(byte())record.constraints=[int(),int(),int(),int()];if(byte())record.scale=[float(),float()];if(byte())record.skew=[float(),float()];if(byte())record.pivot=[float(),float(),Boolean(byte())];record.alpha=float();record.rotation=float();record.visible=Boolean(byte());record.touchable=Boolean(byte());record.grayed=Boolean(byte());
+        // Gear records are length-prefixed so malformed data cannot cross into
+        // a neighbouring child section, even when the outer package is valid.
+        if(blocks>2){
+          const index=section=>shortOffsets?raw.readUInt16BE(at+2+section*2):raw.readInt32BE(at+2+section*4),gearOffset=index(2);
+          if(gearOffset){
+            const later=Array.from({length:blocks},(_,section)=>index(section)).filter(value=>value>gearOffset),limit=later.length?Math.min(end,at+Math.min(...later)):end;
+            if(gearOffset<header||at+gearOffset+2>limit)throw new Error('invalid gear section');
+            let cursor=at+gearOffset,boundary=limit;
+            const take=n=>{const start=cursor;cursor+=n;if(cursor>boundary)throw new Error('truncated gear');return start;},byte=()=>raw[take(1)],short=()=>raw.readInt16BE(take(2)),int=()=>raw.readInt32BE(take(4)),float=()=>raw.readFloatBE(take(4)),ref=()=>childRefs(raw.readUInt16BE(take(2)));
+            const count=short(),gears=[];if(count<0)throw new Error('invalid gear count');
+            for(let i=0;i<count;i++){
+              boundary=limit;const length=short(),gearEnd=cursor+length;if(length<5||gearEnd>limit)throw new Error('invalid gear size');boundary=gearEnd;
+              const type=byte(),controller=short(),n=short(),gear={type,controller};if(n<0)throw new Error('invalid gear page count');
+              if(type===0||type===8)gear.pages=Array.from({length:n},ref);
+              else if([1,2,3,4,5,6,7,9].includes(type)){
+                const value=()=>{if(type===1)return [int(),int()];if(type===2)return [int(),int(),float(),float()];if(type===3)return [float(),float(),Boolean(byte()),Boolean(byte())];if(type===4)return [Array.from(raw.subarray(take(4),cursor)),Array.from(raw.subarray(take(4),cursor))];if(type===5)return {playing:Boolean(byte()),frame:int()};if(type===9)return int();return ref();};
+                gear.values=[];for(let pageIndex=0;pageIndex<n;pageIndex++){const page=ref();if(page!==null)gear.values.push({page,value:value()});}if(byte())gear.default=value();
+              }
+              if(type>=0&&type<=9){gear.tween=Boolean(byte());if(gear.tween){gear.ease=byte();gear.duration=float();gear.delay=float();}}
+              if(type===8)gear.condition=version>=2?byte():0;
+              gears.push(gear);cursor=gearEnd;
+            }
+            if(gears.length)record.gears=gears;
+          }
+        }
         if([6,7,8].includes(record.type)){
           if(blocks<7)throw new Error('missing text sections');const index=section=>shortOffsets?raw.readUInt16BE(at+2+section*2):raw.readInt32BE(at+2+section*4),style=index(5),content=index(6),styleAt=at+style,textAt=at+content;
           if(style<header||content<header||styleAt+20>end||textAt+2>end)throw new Error('invalid text sections');
