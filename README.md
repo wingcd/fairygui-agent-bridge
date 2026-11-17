@@ -12,7 +12,7 @@ FairyGUI 编辑器官方没有 MCP/对外 CLI（命令行 batchmode 发布是付
 
 ## 独立 Node 服务（无需打开编辑器）
 
-`standalone-node/` 提供正在完善的独立 CLI 和 MCP 服务。**一个服务可以操作多个项目**：每次调用都传入 `project`，指向项目目录或 `.fairy` 文件。
+`standalone-node/` 需要 Node.js 20.19 或更新版本（推荐 Node.js 22 LTS），提供正在完善的独立 CLI 和 MCP 服务。**一个服务可以操作多个项目**：每次调用都传入 `project`，指向项目目录或 `.fairy` 文件。
 
 ```powershell
 cd standalone-node

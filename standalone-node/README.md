@@ -1,6 +1,6 @@
 # Standalone Node service
 
-Run `npm ci` in this directory, then start one local service for any number of
+Use Node.js 20.19 or later (Node.js 22 LTS is recommended). Run `npm ci` in this directory, then start one local service for any number of
 projects with `node http-server.mjs --port 7532`. JSON-RPC is available at
 `http://127.0.0.1:7532/rpc`; MCP Streamable HTTP is at `/mcp`. Each tool call
 must include `project`, either a project directory or its `.fairy` file. The
