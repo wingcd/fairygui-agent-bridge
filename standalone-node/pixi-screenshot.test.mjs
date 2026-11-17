@@ -744,3 +744,12 @@ test('PIXI ignores editor-only demo text in text, rich text and input fields',{s
   const withDesign=await capture(source),withoutDesign=await capture(source.replaceAll(' demoText="Design only"',''));assert.deepEqual(withDesign,withoutDesign);assert.ok(withDesign.some(value=>value>180),'runtime text or prompt should be visible');
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI ignores editor component background color',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:90000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-editor-background-'));try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');
+  const file=path.join(dir,'Main.xml'),source='<component size="120,80" bgColorEnabled="true" bgColor="#ff0000"><displayList><graph id="g" xy="10,10" size="30,30" type="rect" lineSize="0" fillColor="#ff00ff00"/></displayList></component>';
+  async function capture(xml){await fs.writeFile(file,xml);const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:120,height:80,settle_ms:0}}});assert.equal(response.result.isError,false,response.result.content[0].text);assert.equal(await fs.readFile(file,'utf8'),xml);return sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();}
+  const withBackground=await capture(source),withoutBackground=await capture(source.replace(' bgColorEnabled="true" bgColor="#ff0000"',''));assert.deepEqual(withBackground,withoutBackground);assert.ok(withBackground.some(value=>value>180),'rendered graph should be visible');
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});
