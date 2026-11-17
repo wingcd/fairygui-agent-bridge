@@ -108,7 +108,15 @@ test('XML publication validates image and simple component output and refuses un
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
-for(const sample of ['Joystick','MainMenu','Guide','Cooldown','Bag','ListEffect','LoopList','ModalWaiting','TreeView','VirtualList','ScrollPane','Chat','PullToRefresh','Transition']) test(`${sample} sample publishes and loads through the Cocos component reader`, {skip:process.platform!=='win32'||!process.env.FGUI_SAMPLE_PROJECT,timeout:180000}, async () => {
+const fullSamplePackages=['Joystick','MainMenu','Guide','Cooldown','Bag','ListEffect','LoopList','ModalWaiting','TreeView','VirtualList','ScrollPane','Chat','PullToRefresh','Transition'];
+const exportedSamplePackages=['HitTest','Basics'];
+test('sample publication cases cover every project package', {skip:process.platform!=='win32'||!process.env.FGUI_SAMPLE_PROJECT},()=>{
+ const assets=path.join(process.env.FGUI_SAMPLE_PROJECT,'assets');
+ const actual=fs.readdirSync(assets,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&fs.existsSync(path.join(assets,entry.name,'package.xml'))).map(entry=>entry.name).sort();
+ const covered=[...fullSamplePackages,...exportedSamplePackages].sort();
+ assert.deepEqual(actual,covered,'update publication cases when sample packages change');
+});
+for(const sample of fullSamplePackages) test(`${sample} sample publishes and loads through the Cocos component reader`, {skip:process.platform!=='win32'||!process.env.FGUI_SAMPLE_PROJECT,timeout:180000}, async () => {
   const project=process.env.FGUI_SAMPLE_PROJECT,build=process.env.FGUI_COCOS_BUILD||path.resolve(project,'../../source/build');
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-joystick-node-'));
   try {
@@ -317,7 +325,7 @@ test('exported-only publication requires external resources to be exported and e
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
-for(const sample of ['HitTest','Basics']) test(`${sample} exported closure publishes and matches source and Cocos reader`, {skip:process.platform!=='win32'||!process.env.FGUI_SAMPLE_PROJECT,timeout:180000},async()=>{
+for(const sample of exportedSamplePackages) test(`${sample} exported closure publishes and matches source and Cocos reader`, {skip:process.platform!=='win32'||!process.env.FGUI_SAMPLE_PROJECT,timeout:180000},async()=>{
  const project=process.env.FGUI_SAMPLE_PROJECT,root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-hit-sample-'));try{
   const result=await publishImages({project,pkg:sample,output:path.join(root,'out'),exported_only:true},{allowSounds:true,allowComponents:true});const nodeReport=await validatePublished({project,file:result.file,compare_source:true,compare_components:true,exported_only:true,check_overlaps:true});assert.equal(nodeReport.valid,true,JSON.stringify(nodeReport.issues));const cwd=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../standalone');
   const script='import json,sys\nfrom fgui import execute\na=json.load(sys.stdin);r=execute("validate_published",{"project":a["project"],"file":a["file"],"compare_source":True,"compare_components":True,"check_overlaps":True,"exported_only":True});print(json.dumps(r));sys.exit(0 if r["valid"] else 1)';
