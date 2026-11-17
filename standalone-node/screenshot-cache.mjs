@@ -10,7 +10,13 @@ export async function digestInputs(entries,options) {
   const stat=await fs.lstat(file);if(stat.isSymbolicLink())throw new Error('screenshot caching does not support symbolic links');
   hash.update(JSON.stringify([relative,stat.isDirectory()?'directory':'file']));
   const unchanged=(a,b)=>a.isFile()&&b.isFile()&&!b.isSymbolicLink()&&a.dev===b.dev&&a.ino===b.ino&&a.size===b.size&&a.mtimeMs===b.mtimeMs&&a.ctimeMs===b.ctimeMs;
- if(stat.isDirectory()) {for(const name of (await fs.readdir(file)).sort())await visit(path.join(file,name),relative+'/'+name);}
+  if(stat.isDirectory()) {
+   const names=(await fs.readdir(file)).sort();for(const name of names)await visit(path.join(file,name),relative+'/'+name);
+   // A newly added or removed dependency must not produce the same key as an
+   // older directory snapshot. Check both identity and entries after traversal.
+   const after=await fs.lstat(file),current=(await fs.readdir(file)).sort();
+   if(!after.isDirectory()||after.isSymbolicLink()||after.dev!==stat.dev||after.ino!==stat.ino||after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs||names.length!==current.length||names.some((name,index)=>name!==current[index]))throw new Error('screenshot cache directory changed while hashing');
+  }
   else if(stat.isFile()) {
    // Avoid buffering a large asset or browser executable in memory for every
    // cache lookup. Small files stay on the lower-overhead readFile path.
