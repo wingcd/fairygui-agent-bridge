@@ -1,0 +1,10 @@
+import {test} from 'node:test';import assert from 'node:assert/strict';import {SharedRenderRegistry} from './shared-render.mjs';
+test('shared rendering cancels only after its last caller leaves',async()=>{
+ const registry=new SharedRenderRegistry(),a=new AbortController(),b=new AbortController();let workerSignal,finish,starts=0;const work=signal=>{starts++;workerSignal=signal;return new Promise(resolve=>finish=resolve);};
+ const first=registry.run('key',work,a.signal),second=registry.run('key',work,b.signal);await Promise.resolve();assert.equal(starts,1);a.abort();await assert.rejects(first,{name:'AbortError'});assert.equal(workerSignal.aborted,false);finish('ok');assert.deepEqual(await second,{value:'ok',shared:true});assert.equal(registry.entries.size,0);
+ const c=new AbortController(),d=new AbortController(),third=registry.run('key',work,c.signal),fourth=registry.run('key',work,d.signal);await Promise.resolve();c.abort();await assert.rejects(third,{name:'AbortError'});d.abort();await assert.rejects(fourth,{name:'AbortError'});assert.equal(workerSignal.aborted,true);assert.equal(registry.entries.size,0);finish('unused');
+});
+
+test('abandoning every shared caller removes queued render work',async()=>{
+ const {RenderGate}=await import('./render-gate.mjs'),gate=new RenderGate(1),registry=new SharedRenderRegistry(),a=new AbortController(),b=new AbortController();let release,started=false;const occupied=gate.run(()=>new Promise(resolve=>release=resolve));await Promise.resolve();const work=signal=>gate.run(()=>{started=true;},{signal});const first=registry.run('key',work,a.signal),second=registry.run('key',work,b.signal);await Promise.resolve();await Promise.resolve();assert.equal(gate.waiting.length,1);a.abort();await assert.rejects(first,{name:'AbortError'});assert.equal(gate.waiting.length,1);b.abort();await assert.rejects(second,{name:'AbortError'});await Promise.resolve();assert.equal(gate.waiting.length,0);release();await occupied;assert.equal(started,false);assert.equal(registry.entries.size,0);
+});

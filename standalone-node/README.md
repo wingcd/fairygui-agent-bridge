@@ -350,8 +350,9 @@ per service process; additional requests wait in arrival order. Set
 `FGUI_PIXI_CONCURRENCY` to 1–4 before starting the service to suit the host.
 The HTTP `/health` endpoint reports the configured limit and the current active
 and queued Pixi renders for the service process. Disconnected HTTP clients are
-removed from the queue for uncached requests; shared cached requests continue
-for other callers, but a cancelled caller does not write its output file.
+removed from the queue; shared requests remain queued while another caller is
+waiting. A cancelled caller does not write its output file. Already-running
+renders may finish.
 The viewer has a renderer selector.
 
 For the Cocos demo's 16 `Main` components, automated screenshot checks cover

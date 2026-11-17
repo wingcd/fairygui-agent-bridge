@@ -11,10 +11,11 @@ import {inspectPublished} from './published.mjs';
 import {digestInputs} from './screenshot-cache.mjs';
 import {pixiScreenshot} from './pixi-screenshot.mjs';
 import {pixiRenderGate} from './render-gate.mjs';
+import {SharedRenderRegistry} from './shared-render.mjs';
 import {resolveChrome} from './browser-path.mjs';
 import {configurePreviewResolution} from './configure-preview.mjs';
 
-const screenshotCache=new Map(),pixiCache=new Map(),pixiInflight=new Map();
+const screenshotCache=new Map(),pixiCache=new Map(),pixiInflight=new SharedRenderRegistry();
 
 export const screenshotBytes = Symbol('screenshotBytes');
 
@@ -44,11 +45,9 @@ export async function screenshot(args,{signal}={}) {
       return digestInputs(entries,{renderer:'pixi',root,selectedProject,pkg:args.pkg,name:args.name,width:args.width??1000,height:args.height??700,settle_ms:args.settle_ms??1000,controller_pages:args.controller_pages??{},controller_overrides:args.controller_overrides??[],chrome:path.resolve(args.chrome)});};
       key=await fingerprint();checkCancelled();const hit=pixiCache.get(key);if(hit){pixiCache.delete(key);pixiCache.set(key,hit);if(output)await fs.writeFile(output,hit.png,{flag:'wx'});return {output,package:hit.pkg,component:hit.component,width:hit.width,height:hit.height,renderer:'FairyGUI PIXI web runtime',experimental:true,cached:true,[screenshotBytes]:hit.png};}
     }
-    const existing=key?pixiInflight.get(key):null;
-    const pending=existing??(async()=>{const rendered=await pixiRenderGate.run(()=>pixiScreenshot(args),{signal:key?undefined:signal});if(key&&rendered.png.length<=8*1024*1024&&await fingerprint()===key){pixiCache.set(key,rendered);while(pixiCache.size>4)pixiCache.delete(pixiCache.keys().next().value);}return rendered;})();
-    if(key&&!existing)pixiInflight.set(key,pending);
-    let rendered;try{rendered=await pending;}finally{if(key&&!existing&&pixiInflight.get(key)===pending)pixiInflight.delete(key);}
-    checkCancelled();if(output)await fs.writeFile(output,rendered.png,{flag:'wx'});return {output,package:rendered.pkg,component:rendered.component,width:rendered.width,height:rendered.height,renderer:'FairyGUI PIXI web runtime',experimental:true,cached:!!existing,[screenshotBytes]:rendered.png};
+    const render=async renderSignal=>{const result=await pixiRenderGate.run(()=>pixiScreenshot(args),{signal:renderSignal});if(key&&result.png.length<=8*1024*1024&&await fingerprint()===key){pixiCache.set(key,result);while(pixiCache.size>4)pixiCache.delete(pixiCache.keys().next().value);}return result;};
+    let rendered,shared=false;if(key){const result=await pixiInflight.run(key,render,signal);rendered=result.value;shared=result.shared;}else rendered=await render(signal);
+    checkCancelled();if(output)await fs.writeFile(output,rendered.png,{flag:'wx'});return {output,package:rendered.pkg,component:rendered.component,width:rendered.width,height:rendered.height,renderer:'FairyGUI PIXI web runtime',experimental:true,cached:shared,[screenshotBytes]:rendered.png};
   }
   for (const key of ['project','pkg','name','demo','distribution','creator','chrome'])
     if (typeof args[key] !== 'string' || !args[key]) throw new Error(`${key} is required`);
