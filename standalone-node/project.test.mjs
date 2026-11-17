@@ -162,3 +162,7 @@ test('component writes reject XML-forbidden control characters without changing 
   fs.writeFileSync(file,xml.replace('Hello','Hello&#1;World'));const report=await validate({project:root});assert.equal(report.valid,false);assert.ok(report.issues.some(issue=>issue.error.includes('invalid XML character')));
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('XML character validation handles large sibling lists without argument overflow',{timeout:60000},()=>{
+ const count=130000,xml='<component><displayList>'+'<text/>'.repeat(count)+'</displayList></component>',node=parse(Buffer.from(xml),'large component');assert.equal(node.firstChild.childNodes.length,count);
+});

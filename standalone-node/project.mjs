@@ -31,7 +31,7 @@ export function parse(data, label) {
   if(!xml11)options.normalizeLineEndings=input=>input.replace(/\r\n?/g,'\n');
   const doc = new DOMParser(options).parseFromString(xml, 'application/xml');
   if (errors.length || !doc.documentElement) throw new Error(`${label}: invalid XML: ${errors.join('; ')}`);
-  const pending=[doc.documentElement];while(pending.length){const node=pending.pop();if(node.nodeValue)checkCharacters(node.nodeValue,false);for(const attribute of Array.from(node.attributes??[]))checkCharacters(attribute.value,false);pending.push(...Array.from(node.childNodes??[]));}
+  const pending=[doc.documentElement];while(pending.length){const node=pending.pop();if(node.nodeValue)checkCharacters(node.nodeValue,false);for(const attribute of Array.from(node.attributes??[]))checkCharacters(attribute.value,false);for(let i=0;i<(node.childNodes?.length??0);i++)pending.push(node.childNodes[i]);}
   return doc.documentElement;
 }
 export function projectRoot(project) {
