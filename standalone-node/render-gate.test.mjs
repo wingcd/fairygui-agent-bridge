@@ -10,3 +10,9 @@ test('render concurrency can be configured and rejects invalid settings',async()
  for(const value of ['1','4']){const {stdout}=await run(process.execPath,['--input-type=module','-e',code],{env:{...process.env,FGUI_PIXI_CONCURRENCY:value},windowsHide:true});assert.equal(stdout.trim(),value);}
  await assert.rejects(run(process.execPath,['--input-type=module','-e',code],{env:{...process.env,FGUI_PIXI_CONCURRENCY:'0'},windowsHide:true}),error=>{assert.match(error.stderr,/FGUI_PIXI_CONCURRENCY/);return true;});
 });
+
+test('HTTP health reports active and queued Pixi renders',async()=>{
+ const {pixiRenderGate}=await import('./render-gate.mjs'),{createServer}=await import('./http-server.mjs');const server=createServer(),resolvers=[],jobs=[];
+ try{await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));for(let i=0;i<pixiRenderGate.limit+1;i++)jobs.push(pixiRenderGate.run(()=>new Promise(resolve=>resolvers.push(resolve))));await Promise.resolve();const response=await fetch(`http://127.0.0.1:${server.address().port}/health`),body=await response.json();assert.equal(body.ok,true);assert.deepEqual(body.pixi_renders,{limit:pixiRenderGate.limit,active:pixiRenderGate.limit,queued:1});}
+ finally{while(resolvers.length){const resolve=resolvers.shift();resolve();await Promise.resolve();await Promise.resolve();}await Promise.all(jobs);await new Promise(resolve=>server.close(resolve));}
+});

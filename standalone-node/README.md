@@ -348,7 +348,8 @@ mode supports `reuse_screenshot` with content-based invalidation and coalesces
 concurrent requests for the same inputs. Up to four Pixi renders run at once
 per service process; additional requests wait in arrival order. Set
 `FGUI_PIXI_CONCURRENCY` to 1–4 before starting the service to suit the host.
-The viewer has a renderer selector.
+The HTTP `/health` endpoint reports the configured limit and the current active
+and queued Pixi renders for the service process. The viewer has a renderer selector.
 
 For the Cocos demo's 16 `Main` components, automated screenshot checks cover
 MainMenu, Joystick, ModalWaiting, HitTest, Basics, ListEffect, LoopList,

@@ -2,6 +2,7 @@ import http from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { message } from './mcp.mjs';
 import { viewer } from './viewer.mjs';
+import { pixiRenderGate } from './render-gate.mjs';
 
 const version = '2025-03-26', maxBody = 16 * 1024 * 1024;
 export function createServer() {
@@ -11,7 +12,7 @@ export function createServer() {
     const viewerRequest=req.url === '/viewer-rpc';
     if ((!viewerRequest && req.headers.origin) || (viewerRequest && req.headers.origin !== `http://${req.headers.host}`) || ![`localhost:${port}`,`127.0.0.1:${port}`].includes(req.headers.host)) { req.resume(); return reply(403,{error:'loopback host required; browser origins are not accepted'}); }
     if (req.method === 'GET' && req.url === '/viewer') { res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; form-action 'self'; frame-ancestors 'none'",'X-Content-Type-Options':'nosniff'}); return res.end(viewer); }
-    if (req.method === 'GET' && req.url === '/health') return reply(200,{ok:true,transport:'json-rpc-http',mcp_version:version});
+    if (req.method === 'GET' && req.url === '/health') return reply(200,{ok:true,transport:'json-rpc-http',mcp_version:version,pixi_renders:{limit:pixiRenderGate.limit,active:pixiRenderGate.active,queued:pixiRenderGate.waiting.length}});
     if (req.method !== 'POST' || !['/rpc','/mcp','/viewer-rpc'].includes(req.url)) { req.resume(); return reply(404,{error:'not found'}); }
     if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) { req.resume(); return reply(415,{error:'Content-Type must be application/json'}); }
     if (req.url === '/mcp' && (!req.headers.accept?.includes('application/json') || !req.headers.accept?.includes('text/event-stream'))) { req.resume(); return reply(406,{error:'Accept must include application/json and text/event-stream'}); }
