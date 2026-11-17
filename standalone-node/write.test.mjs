@@ -486,3 +486,12 @@ test('component writes retry transient Windows rename failures without overwriti
   attempts=0;fs.renameSync=()=>{attempts++;const error=new Error('persistent denial');error.code='EPERM';throw error;};assert.throws(()=>writeComponent({...args,xml:initial,expected_sha256:execute('read_component',args).sha256}),/persistent denial/);assert.equal(attempts,5);assert.equal(fs.readFileSync(file,'utf8'),other);assert.deepEqual(fs.readdirSync(dir).sort(),['Main.xml','package.xml']);
  }finally{fs.renameSync=originalRename;fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('package registration retries safely and rolls back a created component on concurrent edits',{skip:process.platform!=='win32'},()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-register-retry-')),originalRename=fs.renameSync;
+ try{
+  const dir=path.join(root,'assets','Demo');fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(root,'p.fairy'),'<projectDescription/>');const packageFile=path.join(dir,'package.xml'),initial='<packageDescription id="abcdefgh"><resources/></packageDescription>';fs.writeFileSync(packageFile,initial);
+  let attempts=0;fs.renameSync=(...args)=>{if(++attempts===1){const e=new Error('locked');e.code='EBUSY';throw e;}return originalRename(...args);};const made=createComponent({project:root,pkg:'Demo',name:'First',width:20,height:20});assert.equal(attempts,2);assert.ok(fs.existsSync(made.path));assert.match(fs.readFileSync(packageFile,'utf8'),/First.xml/);
+  const external=fs.readFileSync(packageFile,'utf8').replace('</packageDescription>','<!--external--></packageDescription>');attempts=0;fs.renameSync=()=>{attempts++;fs.writeFileSync(packageFile,external);const e=new Error('locked');e.code='EPERM';throw e;};assert.throws(()=>createComponent({project:root,pkg:'Demo',name:'Second',width:20,height:20,path:'/new/'}),/file changed during write/);assert.equal(attempts,1);assert.equal(fs.readFileSync(packageFile,'utf8'),external);assert.equal(fs.existsSync(path.join(dir,'new')),false);assert.deepEqual(fs.readdirSync(dir).sort(),['First.xml','package.xml']);
+ }finally{fs.renameSync=originalRename;fs.rmSync(root,{recursive:true,force:true});}
+});
