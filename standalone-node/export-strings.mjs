@@ -19,6 +19,7 @@ export async function exportStrings(args){
    const file=componentPath(pkg.folder,item),component=parse(await read(file),file);if(component.tagName!=='component')throw new Error('invalid component root: '+file);context=path.basename(pkg.folder)+'/'+path.relative(pkg.folder,file).split(path.sep).join('/');
    const displays=children(component,'displayList');if(displays.length>1)throw new Error('component has multiple display lists: '+file);const objects=children(displays[0]),objectIds=objects.map(object=>attr(object,'id'));if(objectIds.some(id=>!id)||new Set(objectIds).size!==objectIds.length)throw new Error('missing or duplicate display object id: '+file);
    for(const object of objects){
+    if(object.tagName==='group'&&children(object).some(child=>['image','text','richtext','component','list','group','graph','loader','movieclip','jta'].includes(child.tagName)))throw new Error('nested display objects inside group are not supported: '+file);
     const childId=attr(object,'id');if(!childId)throw new Error('display object id is missing: '+file);const key=packageId+id+'-'+childId,label=attr(object,'name')||childId;
     add(key+'-tips',attr(object,'tooltips'),label);
     if(['text','richtext'].includes(object.tagName)){

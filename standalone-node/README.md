@@ -73,7 +73,8 @@ nesting display objects inside a `<group>` is reported as invalid.
 `output` writes a new file and never overwrites one. The tested subset covers
 text and prompts, text gears on text and component instances, Button/Label titles
 and Label prompts, ComboBox and list titles,
-and tooltips; its filter follows the editor behavior observed for ASCII
+and tooltips; nested display objects inside groups are rejected instead of being
+silently omitted. Its filter follows the editor behavior observed for ASCII
 punctuation, letters, symbols and non-ASCII characters. A real editor export
 of the Cocos sample matches all 233 keys, values, labels, order and component
 comments. Other localization fields
