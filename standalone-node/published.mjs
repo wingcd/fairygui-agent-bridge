@@ -34,6 +34,15 @@ export async function validatePublished(args,{preselectedClosure=null}={}){
  const spritesById=new Map(data.sprites.map(sprite=>[sprite.id,sprite])),itemsById=new Map(data.items.map(item=>[item.id,item])),spriteIds=new Set(spritesById.keys()),hitIds=new Set();
  let sourceContext;async function getSourceContext(){if(!sourceContext){const root=projectRoot(args.project),all=packages(root),found=all.filter(p=>attr(p.tree,'id')===data.id);if(found.length!==1)throw new Error('published package ID not found or ambiguous in project');const {folder,tree}=found[0],closure=args.exported_only?(preselectedClosure??await exportedClosure(all,file=>fs.readFile(file))):null;sourceContext={all,folder,tree,closure};}return sourceContext;}
  for(const item of data.items){
+  if(item.type===3&&data.format!=='xml'){
+   const children=item.component.children;
+   const checkRelations=(relations,ownerIndex,child)=>{for(const relation of relations??[]){
+    const context={component:item.id,...(child===null?{}:{child}),target:relation.target};
+    if(relation.target < -1||relation.target>=children.length||relation.target===ownerIndex)issues.push({...context,error:'published relation target index is invalid'});
+    for(const definition of relation.definitions)if(definition.type>24)issues.push({...context,error:'unsupported published relation type'});
+   }};
+   checkRelations(item.component.relations,-2,null);children.forEach((child,index)=>checkRelations(child.relations,index,child.id));
+  }
   if(item.type===3&&data.format!=='xml')for(const child of item.component.children){
    const seen=new Set();for(const gear of child.gears??[]){
     const context={component:item.id,child:child.id,gear:gear.type},controller=item.component.controllers[gear.controller];

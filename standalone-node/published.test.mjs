@@ -208,3 +208,13 @@ test('published relation comparison detects changes to component and child layou
   for(const [from,to,expected] of [['width-width','height-height','component relations'],['left-left,top-top','left-right,top-top','child relations'],['target="a" sidePair="right-right"','target="" sidePair="right-right"','child relations']]){fs.writeFileSync(source,xml.replace(from,to));report=await validatePublished({project:root,file:result.file,compare_components:true});assert.ok(report.issues.some(issue=>issue.error.includes(expected)),from);}
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('published validation detects invalid relation targets and types without source',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-relations-validate-'));try{
+  const file=path.join(root,'Demo.fui'),components=[{id:'main',name:'Main',width:20,height:20,relations:[{target:0,types:[14]}],children:[{type:'text',id:'a',x:0,y:0,text:'Hi',relations:[{target:-1,types:[0]}]},{type:'text',id:'b',x:0,y:0,text:'Hi',relations:[{target:0,types:[24]}]}]}];
+  async function report(){fs.writeFileSync(file,encodeImagePackage('abcdefgh','Demo',[],[],{components}));return validatePublished({file});}
+  assert.equal((await report()).valid,true);components[0].relations[0].target=2;let result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.component==='main'&&issue.error.includes('relation target')));
+  components[0].relations[0].target=0;components[0].children[1].relations[0].target=1;result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.child==='b'&&issue.error.includes('relation target')));
+  components[0].children[1].relations[0].target=0;components[0].children[1].relations[0].types=[25];result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.child==='b'&&issue.error.includes('relation type')));
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

@@ -142,7 +142,7 @@ all registered resources, including unused ones.
 
 `inspect_published` inspects the supported binary format, including component gear records, and editor XML ZIP
 packages; `validate_published`
-checks atlas and sound files, sprite and media references, component gear controller indices and settings, pixel mask
+checks atlas and sound files, sprite and media references, component relation targets and types, gear controller indices and settings, pixel mask
 dimensions and optional sprite overlap. Unknown gear page IDs are reported as warnings, with optional source image metadata
 and pixel comparison, plus source sound byte comparison. Pixel comparison ignores
 embedded ICC profiles and RGB values where alpha is zero. XML inspection checks resource metadata, component XML
