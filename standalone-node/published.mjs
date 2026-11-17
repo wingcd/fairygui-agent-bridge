@@ -30,6 +30,17 @@ export async function validatePublished(args,{preselectedClosure=null}={}){
  const spritesById=new Map(data.sprites.map(sprite=>[sprite.id,sprite])),itemsById=new Map(data.items.map(item=>[item.id,item])),spriteIds=new Set(spritesById.keys()),hitIds=new Set();
  let sourceContext;async function getSourceContext(){if(!sourceContext){const root=projectRoot(args.project),all=packages(root),found=all.filter(p=>attr(p.tree,'id')===data.id);if(found.length!==1)throw new Error('published package ID not found or ambiguous in project');const {folder,tree}=found[0],closure=args.exported_only?(preselectedClosure??await exportedClosure(all,file=>fs.readFile(file))):null;sourceContext={all,folder,tree,closure};}return sourceContext;}
  for(const item of data.items){
+  if(item.type===3&&data.format!=='xml')for(const child of item.component.children){
+   const seen=new Set();for(const gear of child.gears??[]){
+    const context={component:item.id,child:child.id,gear:gear.type},controller=item.component.controllers[gear.controller];
+    if(!Number.isInteger(gear.type)||gear.type<0||gear.type>9)issues.push({...context,error:'unsupported published gear type'});
+    if(seen.has(gear.type))issues.push({...context,error:'duplicate published gear type'});seen.add(gear.type);
+    if(!controller)issues.push({...context,error:'published gear controller index is invalid'});
+    else {const known=new Set(controller.pages.map(page=>page[0])),pages=gear.pages??gear.values?.map(value=>value.page)??[];const unknown=pages.filter(page=>!known.has(page));if(unknown.length)warnings.push({...context,pages:unknown,warning:'published gear refers to unknown controller pages'});}
+    if(gear.type===8&&![0,1].includes(gear.condition))issues.push({...context,error:'invalid published display gear condition'});
+    if(gear.tween&&(!Number.isFinite(gear.duration)||gear.duration<0||!Number.isFinite(gear.delay)||gear.delay<0))issues.push({...context,error:'invalid published gear tween timing'});
+   }
+  }
   if(item.type===0&&!spriteIds.has(item.id))issues.push({image:item.id,error:'image sprite missing'});
   if(item.type===0&&spriteIds.has(item.id)){const sprite=spritesById.get(item.id);if((sprite.original_width??sprite.width)!==item.width||(sprite.original_height??sprite.height)!==item.height)issues.push({image:item.id,error:'sprite dimensions differ from image metadata'});}
   if(item.type===0&&item.scale9Grid){const [x,y,w,h]=item.scale9Grid;if(x<0||y<0||w<=0||h<=0)issues.push({image:item.id,error:'invalid scale9grid'});else if(x+w>item.width||y+h>item.height)warnings.push({image:item.id,warning:'scale9grid extends beyond image dimensions'});}

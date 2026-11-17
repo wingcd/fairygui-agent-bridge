@@ -188,3 +188,14 @@ test('gear source comparison supports size, look, animation and icons',async()=>
  assert.deepEqual(sourceGears(node,[{name:'state'}]),[{type:2,controller:0,values:[{page:'p0',value:[20,30,1,1]}],default:[4,5,2,3],tween:false},{type:3,controller:0,values:[{page:'p0',value:[0.5,90,true,true]}],tween:false},{type:5,controller:0,values:[{page:'p0',value:{playing:true,frame:3}}],default:{playing:false,frame:2},tween:false},{type:7,controller:0,values:[{page:'p0',value:null}],default:null,tween:false}]);
  assert.throws(()=>sourceGears(parse(Buffer.from(xml.replace('0.5,90,1','0.5,90,2')),'test'),[{name:'state'}]),/look flags/);
 });
+
+test('published validation detects broken gear references without a source project',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-gear-validate-'));try{
+  const file=path.join(root,'Demo.fui'),components=[{id:'main',name:'Main',width:20,height:20,controllers:[{name:'state',pages:[['p0','normal']]}],children:[{type:'text',id:'t',x:0,y:0,text:'Hi',gears:[{type:'display',controllerIndex:0,pages:['p0']}]}]}];
+  async function report(){fs.writeFileSync(file,encodeImagePackage('abcdefgh','Demo',[],[],{components}));return validatePublished({file});}
+  assert.equal((await report()).valid,true);components[0].children[0].gears[0].controllerIndex=1;let result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.child==='t'&&issue.error.includes('controller index')));
+  components[0].children[0].gears[0].controllerIndex=0;components[0].children[0].gears[0].pages=['missing'];result=await report();assert.equal(result.valid,true);assert.ok(result.warnings.some(issue=>issue.child==='t'&&issue.pages.includes('missing')));
+  components[0].children[0].gears.push({type:'display',controllerIndex:0,pages:['p0']});result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.error.includes('duplicate published gear')));
+  components[0].children[0].gears=[{type:'display2',controllerIndex:0,pages:['p0'],condition:2}];result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.error.includes('gear condition')));
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
