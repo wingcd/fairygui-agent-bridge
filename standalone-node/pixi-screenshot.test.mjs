@@ -735,3 +735,12 @@ test('PIXI renders native inputtext elements',{skip:!process.env.FGUI_CHROME||pr
   const invalid=source.replace('<inputtext ','<inputtext input="false" ');await fs.writeFile(file,invalid);const response=await message({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:200,height:80,settle_ms:0}}});assert.equal(response.result.isError,true,'conflicting input flag must be rejected');assert.equal(await fs.readFile(file,'utf8'),invalid);
  }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('PIXI ignores editor-only demo text in text and input fields',{skip:!process.env.FGUI_CHROME||process.platform!=='win32',timeout:120000},async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'fgui-pixi-demo-text-'));try{
+  const dir=path.join(root,'assets','Demo');await fs.mkdir(dir,{recursive:true});await fs.writeFile(path.join(root,'p.fairy'),'<projectDescription type="CocosCreator"/>');await fs.writeFile(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/" exported="true"/></resources><publish name="Demo"/></packageDescription>');
+  const file=path.join(dir,'Main.xml'),source='<component size="240,100"><displayList><text id="a" xy="0,0" size="220,40" fontSize="25" color="#ffffff" autoSize="none" demoText="Design only" text="Runtime"/><inputtext id="b" xy="0,45" size="220,40" fontSize="25" color="#ffffff" autoSize="none" demoText="Design only" prompt="Prompt"/></displayList></component>';
+  async function capture(xml){await fs.writeFile(file,xml);const response=await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'screenshot',arguments:{project:root,pkg:'Demo',name:'Main',renderer:'pixi',width:240,height:100,settle_ms:0}}});assert.equal(response.result.isError,false,response.result.content[0].text);assert.equal(await fs.readFile(file,'utf8'),xml);return sharp(Buffer.from(response.result.content[1].data,'base64')).removeAlpha().raw().toBuffer();}
+  const withDesign=await capture(source),withoutDesign=await capture(source.replaceAll(' demoText="Design only"',''));assert.deepEqual(withDesign,withoutDesign);assert.ok(withDesign.some(value=>value>180),'runtime text or prompt should be visible');
+ }finally{await fs.rm(root,{recursive:true,force:true});}
+});

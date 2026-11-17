@@ -373,6 +373,7 @@ node --test --test-name-pattern='PIXI renders.*(sample|initial state)' pixi-scre
 
 Adjust the project and browser paths for your installation. These checks include
 all 16 sample Main components and selected additional sample components.
+Editor-only `demoText` is ignored in the runtime preview; actual `text` and input prompts are rendered.
 Input text is rendered in its unfocused state, including password masking,
 plain-text prompts and the tested color-marked prompt forms; other styled input
 prompts are not yet supported.
