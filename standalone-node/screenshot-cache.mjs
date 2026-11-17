@@ -10,7 +10,19 @@ export async function digestInputs(entries,options) {
   const stat=await fs.lstat(file);if(stat.isSymbolicLink())throw new Error('screenshot caching does not support symbolic links');
   hash.update(JSON.stringify([relative,stat.isDirectory()?'directory':'file']));
   if(stat.isDirectory()) {for(const name of (await fs.readdir(file)).sort())await visit(path.join(file,name),relative+'/'+name);}
-  else if(stat.isFile()) {const bytes=await fs.readFile(file);hash.update(String(bytes.length)+':');hash.update(bytes);}
+  else if(stat.isFile()) {
+   // Avoid buffering a large asset or browser executable in memory for every
+   // cache lookup. Small files stay on the lower-overhead readFile path.
+   if(stat.size<=1024*1024){const bytes=await fs.readFile(file);hash.update(String(bytes.length)+':');hash.update(bytes);}
+   else {
+    const handle=await fs.open(file,'r');try{
+     const before=await handle.stat();if(!before.isFile()||before.dev!==stat.dev||before.ino!==stat.ino||before.size!==stat.size)throw new Error('screenshot cache input changed while hashing');
+     hash.update(String(before.size)+':');let length=0;
+     for await(const chunk of handle.createReadStream({autoClose:false})){length+=chunk.length;hash.update(chunk);}
+     const after=await handle.stat();if(length!==before.size||after.size!==before.size||after.mtimeMs!==before.mtimeMs||after.ctimeMs!==before.ctimeMs)throw new Error('screenshot cache input changed while hashing');
+    }finally{await handle.close();}
+   }
+  }
   else throw new Error('screenshot caching supports regular files only');
  }
  for(const [label,file,optional] of entries){
