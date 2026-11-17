@@ -345,8 +345,9 @@ publication currently starts controllers on their published home page instead. T
 is available explicitly for projects outside the PIXI preview subset. PIXI
 mode supports `reuse_screenshot` with content-based invalidation and coalesces
 concurrent requests for the same inputs. Up to four Pixi renders run at once
-per service process; additional requests wait in arrival order. The viewer has a
-renderer selector.
+per service process; additional requests wait in arrival order. Set
+`FGUI_PIXI_CONCURRENCY` to 1–4 before starting the service to suit the host.
+The viewer has a renderer selector.
 
 For the Cocos demo's 16 `Main` components, automated screenshot checks cover
 MainMenu, Joystick, ModalWaiting, HitTest, Basics, ListEffect, LoopList,

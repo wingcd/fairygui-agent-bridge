@@ -6,4 +6,6 @@ export class RenderGate {
   try{return await task();}finally{const next=this.waiting.shift();if(next)next();else this.active--;}
  }
 }
-export const pixiRenderGate=new RenderGate(4);
+const configured=process.env.FGUI_PIXI_CONCURRENCY;
+if(configured!==undefined&&!/^[1-4]$/.test(configured))throw new Error('FGUI_PIXI_CONCURRENCY must be an integer between 1 and 4');
+export const pixiRenderGate=new RenderGate(configured===undefined?4:Number(configured));
