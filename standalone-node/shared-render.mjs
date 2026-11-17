@@ -1,6 +1,7 @@
 // Coalesce identical work while independently tracking each caller's cancellation.
 export class SharedRenderRegistry {
  constructor(){this.entries=new Map();}
+ snapshot(){return {jobs:this.entries.size,callers:[...this.entries.values()].reduce((total,entry)=>total+entry.users,0)};}
  run(key,start,signal){
   if(signal?.aborted)return Promise.reject(Object.assign(new Error('render request cancelled'),{name:'AbortError'}));
   let entry=this.entries.get(key),shared=!!entry;
@@ -14,3 +15,5 @@ export class SharedRenderRegistry {
   });
  }
 }
+
+export const pixiSharedRenders=new SharedRenderRegistry();

@@ -11,11 +11,11 @@ import {inspectPublished} from './published.mjs';
 import {digestInputs} from './screenshot-cache.mjs';
 import {pixiScreenshot} from './pixi-screenshot.mjs';
 import {pixiRenderGate} from './render-gate.mjs';
-import {SharedRenderRegistry} from './shared-render.mjs';
+import {pixiSharedRenders} from './shared-render.mjs';
 import {resolveChrome} from './browser-path.mjs';
 import {configurePreviewResolution} from './configure-preview.mjs';
 
-const screenshotCache=new Map(),pixiCache=new Map(),pixiInflight=new SharedRenderRegistry();
+const screenshotCache=new Map(),pixiCache=new Map(),pixiInflight=pixiSharedRenders;
 
 export const screenshotBytes = Symbol('screenshotBytes');
 
