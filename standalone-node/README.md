@@ -69,6 +69,8 @@ objects must include a valid `xy` position, which the editor requires.
 `set_properties` also edits group advanced mode, layout, gaps, visibility exclusion, auto-size and main-grid index. Disabling advanced mode makes the group editor-only.
 Use `set_properties` with `group` set to a sibling group ID to assign membership, or null to clear it. Group members must be sibling display-list objects;
 nesting display objects inside a `<group>` is reported as invalid.
+`adapt_generator_component` prepares XML from the referenced FairyGUI XML generator for review. Pass `project`, the destination `pkg`, and the generated `xml`. It returns a proposed `xml`, a `changes` list, explicit `assumptions`, and `references_valid`/`reference_issues`; it does not write the project. Registered image and component URLs are resolved to editor resource IDs. Nested horizontal or vertical groups are flattened to sibling objects, group-relative coordinates are converted, and missing positions are inferred from sizes and gaps. Explicit group text sizes are treated as fixed; generator `flow` is interpreted as `flow_hz`. Missing or ambiguous resources and layouts that cannot be inferred are rejected. Review the assumptions, use `write_component` with the current SHA-256, then run validation, publication preflight and a screenshot; reference checks alone do not prove full compatibility.
+
 `export_strings` returns experimental TranslationHelper-compatible XML; optional
 `output` writes a new file and never overwrites one. The tested subset covers
 text and prompts, text gears on text and component instances, Button/Label titles
@@ -190,6 +192,8 @@ editor or runtime compatibility. Sample package tests exercise the compiled
 Cocos package and component readers with stubbed engine objects; set
 `FGUI_COCOS_BUILD` if the build directory is not at `../../source/build`
 relative to the sample project.
+
+To test the referenced generator templates, set `FGUI_GENERATOR_TEMPLATES` to its `assets/templates` directory and run `node --test adapt-generator.test.mjs`. The optional `python standalone-node/test_editor_generator.py TEMPLATE_DIR EDITOR_EXE` opens all adapted templates in a temporary project and compares their published data with the editor.
 
 For an opt-in real editor interoperability check, run
 `python standalone-node/test_editor_roundtrip.py PROJECT EDITOR_EXE`. It copies
@@ -328,7 +332,7 @@ FairyGUI PixiJS runtime and Chrome directly, without Cocos Creator. It currently
 detects Chrome and, on Windows, Edge in common installation locations; `chrome` or `FGUI_CHROME`
 can select a different executable. It currently
 uses a restricted legacy XML preview subset, including simple nested Button and Label
-components, native `inputtext` and `text input="true"` fields, and styled text including outline and shadows; unsupported features are rejected. Only the requested component and
+components, pre-positioned static horizontal or vertical groups, native `inputtext` and `text input="true"` fields, and styled text including outline and shadows; unsupported features are rejected. Dynamic group layouts and groups with animated or gear-driven members remain unsupported. Only the requested component and
 its same-package dependencies are selected; referenced external packages still
 include their exported resources. The Cocos sample
 `MainMenu/Main` renders, but pixel comparison found differences from Cocos
