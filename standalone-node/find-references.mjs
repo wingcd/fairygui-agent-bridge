@@ -12,12 +12,23 @@ export function findReferences(args){
  const digest=b=>crypto.createHash('sha256').update(b).digest('hex');const read=file=>{const data=fs.readFileSync(file),sum=digest(data);if(snapshot.has(file)&&snapshot.get(file)!==sum)throw new Error('source changed during reference scan');snapshot.set(file,sum);return data;};
  const folders=all.map(p=>p.folder);for(const pkg of all)read(path.join(pkg.folder,'package.xml'));
  const settings=path.join(root,'settings');function settingsFiles(){
-  const out=[],dirs=[];let rootStat;try{rootStat=fs.lstatSync(settings);}catch(error){if(error.code==='ENOENT')return out;throw error;}
-  if(rootStat.isSymbolicLink()||!rootStat.isDirectory())out.push({file:settings,kind:'unsupported'});else dirs.push(settings);
-  while(dirs.length){const dir=dirs.pop();for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const file=path.join(dir,entry.name);if(entry.isSymbolicLink())out.push({file,kind:'unsupported'});else if(entry.isDirectory())dirs.push(file);else if(entry.name.toLowerCase().endsWith('.json'))out.push({file,kind:entry.isFile()?'file':'unsupported'});}}
-  return out.sort((a,b)=>a.file.localeCompare(b.file));
+  const out=[],visited=new Set(),canonical=value=>process.platform==='win32'?value.toLowerCase():value;
+  function visit(file,ancestors,isRoot=false){
+   let entry;try{entry=fs.lstatSync(file);}catch(error){if(isRoot&&error.code==='ENOENT')return;out.push({file,kind:'unreadable',error:error.code??error.message});return;}
+   let target=entry,real;
+   if(entry.isSymbolicLink()){
+    try{real=fs.realpathSync(file);target=fs.statSync(file);out.push({file,kind:'link',real});}catch(error){out.push({file,kind:'unreadable',error:error.code??error.message});return;}
+   }
+   if(target.isDirectory()){
+    real=real??fs.realpathSync(file);const identity=canonical(real);
+    if(ancestors.has(identity)){out.push({file,kind:'cycle'});return;}if(visited.has(identity))return;visited.add(identity);
+    const next=new Set(ancestors);next.add(identity);let names;try{names=fs.readdirSync(file).sort();}catch(error){out.push({file,kind:'unreadable',error:error.code??error.message});return;}for(const name of names)visit(path.join(file,name),next);
+   }else if(!isRoot&&file.toLowerCase().endsWith('.json'))out.push({file,kind:target.isFile()?'file':'unsupported'});
+   else if(isRoot)out.push({file,kind:'unsupported'});
+  }
+  visit(settings,new Set(),true);return out.sort((a,b)=>a.file.localeCompare(b.file)||a.kind.localeCompare(b.kind));
  }
- const files=settingsFiles();for(const {file,kind} of files)try{if(kind!=='file')throw new Error('symbolic links and non-file settings entries are unsupported for reference scanning');const stat=fs.lstatSync(file);if(stat.isSymbolicLink()||!stat.isFile())throw new Error('settings entry changed during reference scan');const doc=JSON.parse(read(file).toString('utf8').replace(/^\uFEFF/,'')),stack=[['$',doc]];while(stack.length){const [key,value]=stack.pop();if(typeof value==='string'){for(const part of urls.has(value)?[value]:value.split(/[,|]/))if(urls.has(part))references.push({path:file,kind:'project_setting',attribute:key,value:part});}else if(Array.isArray(value))value.forEach((v,i)=>stack.push([`${key}[${i}]`,v]));else if(value&&typeof value==='object')for(const [name,v] of Object.entries(value))stack.push([`${key}.${name}`,v]);}}catch(error){warnings.push({path:file,error:error.message});}
+ const files=settingsFiles();for(const {file,kind,error} of files)try{if(kind==='link')continue;if(kind!=='file')throw new Error(kind==='cycle'?'cyclic settings link':`settings entry cannot be scanned: ${error??kind}`);const stat=fs.statSync(file);if(!stat.isFile())throw new Error('settings entry changed during reference scan');const doc=JSON.parse(read(file).toString('utf8').replace(/^\uFEFF/,'')),stack=[['$',doc]];while(stack.length){const [key,value]=stack.pop();if(typeof value==='string'){for(const part of urls.has(value)?[value]:value.split(/[,|]/))if(urls.has(part))references.push({path:file,kind:'project_setting',attribute:key,value:part});}else if(Array.isArray(value))value.forEach((v,i)=>stack.push([`${key}[${i}]`,v]));else if(value&&typeof value==='object')for(const [name,v] of Object.entries(value))stack.push([`${key}.${name}`,v]);}}catch(error){warnings.push({path:file,error:error.message});}
  for(const pkg of all)for(const resource of resources(pkg.tree)){if(!['component','font'].includes(resource.tagName))continue;try{const file=componentPath(pkg.folder,resource),raw=read(file),common={package:path.basename(pkg.folder),resource:attr(resource,'name'),path:file};
   if(resource.tagName==='font'){if(pkg.folder!==owner.folder||item.tagName!=='image')continue;const font=readBitmapFont(raw,attr(resource,'texture'));if(font.texture===id)references.push({...common,kind:'font_texture',attribute:'texture',value:id});for(const glyph of font.glyphs)if(glyph.image===id)references.push({...common,kind:'font_glyph',glyph:glyph.id,attribute:'img',value:id});continue;}
   const node=parse(raw,file);if(node.tagName!=='component')throw new Error('invalid component root');
