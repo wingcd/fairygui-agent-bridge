@@ -146,3 +146,19 @@ test('XML 1.0 parsing preserves Unicode line and paragraph separators',()=>{
  assert.equal(node.getElementsByTagName('text')[0].getAttribute('text'),'A\u0085B\u2028C\u2029D');
  const xml11=parse(Buffer.from('<?xml version="1.1"?><text value="A\u2028B"/>'),'xml11');assert.equal(xml11.getAttribute('value'),'A B');
 });
+
+test('XML parsing rejects forbidden characters and accepts valid XML 1.1 references',()=>{
+ for(const control of ['\u0000','\u0001','\u000b','\u000c','\u001f','\ufffe','\uffff'])assert.throws(()=>parse(Buffer.from(`<component value="A${control}B"/>`),'test'),/invalid XML character/);
+ for(const reference of ['&#0;','&#1;','&#xB;','&#xFFFE;'])assert.throws(()=>parse(Buffer.from(`<component value="A${reference}B"/>`),'test'),/invalid XML/);
+ assert.equal(parse(Buffer.from('<?xml version="1.1"?><component value="A&#1;B"/>'),'test').getAttribute('value'),'A\u0001B');
+ assert.throws(()=>parse(Buffer.from('<?xml version="1.1"?><component value="A\u0001B"/>'),'test'),/invalid XML character/);
+ assert.equal(parse(Buffer.from('<component value="A\u0085B\u2028C😀"/>'),'test').getAttribute('value'),'A\u0085B\u2028C😀');
+});
+
+test('component writes reject XML-forbidden control characters without changing files',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-invalid-xml-char-'));try{
+  const dir=path.join(root,'assets','Demo');fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(root,'p.fairy'),'<projectDescription/>');fs.writeFileSync(path.join(dir,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/"/></resources></packageDescription>');const file=path.join(dir,'Main.xml'),xml='<component size="20,20"><displayList><text id="t" xy="0,0" text="Hello"/></displayList></component>';fs.writeFileSync(file,xml);const args={project:root,pkg:'Demo',name:'Main'},sha=execute('read_component',args).sha256;
+  for(const value of ['Hello\u0001World','Hello&#1;World']){assert.throws(()=>writeComponent({...args,xml:xml.replace('Hello',value),expected_sha256:sha}),/invalid XML character/);assert.equal(fs.readFileSync(file,'utf8'),xml);}
+  fs.writeFileSync(file,xml.replace('Hello','Hello&#1;World'));const report=await validate({project:root});assert.equal(report.valid,false);assert.ok(report.issues.some(issue=>issue.error.includes('invalid XML character')));
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

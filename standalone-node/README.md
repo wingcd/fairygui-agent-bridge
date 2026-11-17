@@ -12,7 +12,7 @@ The CLI accepts a tool name and a JSON object, or `@path` to a UTF-8 JSON file (
 `tools/list`; MCP calls are checked against those schemas before execution.
 For edits, read the component first and pass its `sha256` as
 `expected_sha256`; stale writes fail. On Windows, short-lived file replacement denials are retried for up to 370 ms, with revision and dependency checks repeated before each attempt. Persistent errors are returned to the caller. Component and package XML reads accept
-UTF-8 and UTF-16; edits write UTF-8 and update the XML encoding declaration.
+UTF-8 and UTF-16; edits write UTF-8 and update the XML encoding declaration. XML-forbidden characters are rejected before writing.
 `set_component_properties` supports component dimensions, opacity, masks, hit
 tests, overflow, margins and scroll configuration; pass null to clear masks,
 hit tests or scroll-specific properties.

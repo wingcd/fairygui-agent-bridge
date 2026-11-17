@@ -21,10 +21,17 @@ export function parse(data, label) {
   // FairyGUI files use XML 1.0: NEL, line separator and paragraph separator
   // are content, whereas xmldom's default normalization also rewrites them.
   const xml11=/^\s*<\?xml\s+[^?]*\bversion\s*=\s*['"]1\.1['"]/i.test(xml);
+  // xmldom accepts XML-forbidden control characters. Reject them before
+  // writing editor projects; XML 1.1 permits restricted characters only as
+  // numeric references, while XML 1.0 forbids them even as references.
+  const invalidCodePoint=(cp,raw)=>cp===0||cp>0x10ffff||(cp>=0xd800&&cp<=0xdfff)||cp===0xfffe||cp===0xffff||(xml11?(raw&&((cp>=1&&cp<=8)||cp===11||cp===12||(cp>=14&&cp<=31)||(cp>=0x7f&&cp<=0x84)||(cp>=0x86&&cp<=0x9f))):(cp<32&&cp!==9&&cp!==10&&cp!==13));
+  const checkCharacters=(value,raw)=>{for(const ch of value)if(invalidCodePoint(ch.codePointAt(0),raw))throw new Error(`${label}: invalid XML character U+${ch.codePointAt(0).toString(16).toUpperCase()}`);};
+  checkCharacters(xml,true);
   const options={onError:(level,message)=>errors.push(`${level}: ${message}`)};
   if(!xml11)options.normalizeLineEndings=input=>input.replace(/\r\n?/g,'\n');
   const doc = new DOMParser(options).parseFromString(xml, 'application/xml');
   if (errors.length || !doc.documentElement) throw new Error(`${label}: invalid XML: ${errors.join('; ')}`);
+  const pending=[doc.documentElement];while(pending.length){const node=pending.pop();if(node.nodeValue)checkCharacters(node.nodeValue,false);for(const attribute of Array.from(node.attributes??[]))checkCharacters(attribute.value,false);pending.push(...Array.from(node.childNodes??[]));}
   return doc.documentElement;
 }
 export function projectRoot(project) {
