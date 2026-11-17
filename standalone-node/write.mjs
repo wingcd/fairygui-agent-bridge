@@ -18,6 +18,22 @@ import { execute } from './project.mjs';
 const hash = data => crypto.createHash('sha256').update(data).digest('hex');
 const utf8Declaration = xml => xml.replace(/^(\uFEFF?<\?xml\s+[^?]*?\bencoding\s*=\s*)(["'])([^"']+)\2/i, '$1$2utf-8$2');
 const packageXmlForEdit = data => utf8Declaration(decodeXml(data,'package.xml',true));
+// Windows file indexers or antivirus can briefly deny replacement. Recheck the
+// original and dependent files before every attempt so retries cannot commit
+// a stale edit. Other errors and persistent denial are reported unchanged.
+function renameChecked(temp, target, check) {
+  const delays = process.platform === 'win32' ? [20, 50, 100, 200] : [];
+  const wait = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; ; attempt++) {
+    check();
+    try { fs.renameSync(temp, target); return; }
+    catch (error) {
+      if (!['EPERM','EBUSY'].includes(error.code) || attempt >= delays.length) throw error;
+      Atomics.wait(wait, 0, 0, delays[attempt]);
+    }
+  }
+}
+
 function withProjectLock(root, fn) {
   const identity=process.platform==='win32' ? root.toLowerCase() : root;
   const lock=path.join(os.tmpdir(),'fgui-node-'+hash(Buffer.from(identity))+'.lock');
@@ -57,9 +73,7 @@ function writeComponentLocked(args,root,beforeCommit=null) {
     const temp=path.join(path.dirname(file),'.fgui-'+crypto.randomBytes(16).toString('hex')+'.tmp');
     try {
       const fd=fs.openSync(temp,'wx'); try {fs.writeFileSync(fd,data);fs.fsyncSync(fd);} finally {fs.closeSync(fd);}
-      if(beforeCommit)beforeCommit();
-      if(hash(fs.readFileSync(file))!==before) throw new Error('file changed during write');
-      fs.renameSync(temp,file);
+      renameChecked(temp,file,()=>{if(beforeCommit)beforeCommit();if(hash(fs.readFileSync(file))!==before)throw new Error('file changed during write');});
     } finally {try {fs.unlinkSync(temp);} catch(error) {if(error.code!=='ENOENT') throw error;}}
     return {path:file,sha256:hash(data)};
 }
@@ -131,8 +145,7 @@ export function createComponent(args) {
       }
       target=path.join(directory,filename);const fd=fs.openSync(target,'wx');made=true;try{fs.writeFileSync(fd,component);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
       const out=fs.openSync(temp,'wx');try{fs.writeFileSync(out,changed,'utf8');fs.fsyncSync(out);}finally{fs.closeSync(out);}
-      if(hash(fs.readFileSync(packageFile))!==hash(original))throw new Error('file changed during write');
-      fs.renameSync(temp,packageFile);made=false;
+      renameChecked(temp,packageFile,()=>{if(hash(fs.readFileSync(packageFile))!==hash(original))throw new Error('file changed during write');});made=false;
       return {id,name,path:target,sha256:hash(component)};
     } finally {
       if(made && target)fs.unlinkSync(target);
@@ -329,7 +342,7 @@ export async function setImageOptions(args) {
     if(!found)throw new Error('could not locate image resource');let tag=found[0];
     for(const [key,value] of Object.entries(updates)){const pattern=new RegExp(`\\s+${key}\\s*=\\s*(?:"[^"]*"|'[^']*')`);if(pattern.test(tag))tag=tag.replace(pattern,value===null?'':` ${key}="${value}"`);else if(value!==null)tag=tag.replace(/\s*\/?>$/,m=>` ${key}="${value}"${m}`);}
     const data=Buffer.from(xml.slice(0,found.index)+tag+xml.slice(found.index+found[0].length));parse(data,'package.xml');const temp=path.join(folder,'.fgui-package-'+crypto.randomBytes(16).toString('hex')+'.tmp');
-    try{const fd=fs.openSync(temp,'wx');try{fs.writeFileSync(fd,data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}if(hash(fs.readFileSync(file))!==before)throw new Error('file changed during write');if(imageSnapshot&&hash(fs.readFileSync(imageSnapshot.file))!==imageSnapshot.hash)throw new Error('image changed during validation');fs.renameSync(temp,file);}finally{try{fs.unlinkSync(temp);}catch(e){if(e.code!=='ENOENT')throw e;}}
+    try{const fd=fs.openSync(temp,'wx');try{fs.writeFileSync(fd,data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}renameChecked(temp,file,()=>{if(hash(fs.readFileSync(file))!==before)throw new Error('file changed during write');if(imageSnapshot&&hash(fs.readFileSync(imageSnapshot.file))!==imageSnapshot.hash)throw new Error('image changed during validation');});}finally{try{fs.unlinkSync(temp);}catch(e){if(e.code!=='ENOENT')throw e;}}
     return {path:file,sha256:hash(data),id:attr(item,'id'),warnings:gridWarning?[gridWarning]:[]};
   });
 }
@@ -477,7 +490,7 @@ export async function importResource(args,kind) {
     if(!open||(!/\/\s*>$/.test(open[0])&&!close))throw new Error('could not locate resources element');const changed=/\/\s*>$/.test(open[0])?xml.slice(0,open.index)+open[0].replace(/\/\s*>$/,`>${entry}</resources>`)+xml.slice(open.index+open[0].length):xml.slice(0,close.index)+'\n    '+entry+'\n  '+xml.slice(close.index);parse(Buffer.from(changed),'package.xml');
     const created=[],temp=path.join(folder,'.fgui-package-'+crypto.randomBytes(16).toString('hex')+'.tmp');let target=null,made=false;
     try{let directory=folder;for(const part of parts){directory=path.join(directory,part);if(!fs.existsSync(directory)){fs.mkdirSync(directory);created.push(directory);}const real=fs.realpathSync(directory),relative=path.relative(fs.realpathSync(folder),real);if(relative==='..'||relative.startsWith('..'+path.sep)||path.isAbsolute(relative)||!fs.statSync(real).isDirectory())throw new Error('package path escapes package');}
-      target=path.join(directory,filename);const fd=fs.openSync(target,'wx');made=true;try{fs.writeFileSync(fd,data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}const out=fs.openSync(temp,'wx');try{fs.writeFileSync(out,changed,'utf8');fs.fsyncSync(out);}finally{fs.closeSync(out);}if(hash(fs.readFileSync(packageFile))!==hash(original))throw new Error('file changed during write');if(fontSnapshot)for(const [file,digest] of fontSnapshot)if(hash(fs.readFileSync(file))!==digest)throw new Error('font dependencies changed during validation');fs.renameSync(temp,packageFile);made=false;return {id,name:filename,path:target,...metadata,sha256:hash(data)};
+      target=path.join(directory,filename);const fd=fs.openSync(target,'wx');made=true;try{fs.writeFileSync(fd,data);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}const out=fs.openSync(temp,'wx');try{fs.writeFileSync(out,changed,'utf8');fs.fsyncSync(out);}finally{fs.closeSync(out);}renameChecked(temp,packageFile,()=>{if(hash(fs.readFileSync(packageFile))!==hash(original))throw new Error('file changed during write');if(fontSnapshot)for(const [file,digest] of fontSnapshot)if(hash(fs.readFileSync(file))!==digest)throw new Error('font dependencies changed during validation');});made=false;return {id,name:filename,path:target,...metadata,sha256:hash(data)};
     }finally{if(made&&target)fs.unlinkSync(target);try{fs.unlinkSync(temp);}catch(e){if(e.code!=='ENOENT')throw e;}for(const directory of created.reverse())try{fs.rmdirSync(directory);}catch(e){if(e.code!=='ENOTEMPTY'&&e.code!=='ENOENT')throw e;}}
   });
 }
@@ -509,7 +522,7 @@ export function unregisterResource(args) {
   const tokens=/<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>|<\/?[A-Za-z_][\w:.-]*(?:\s+(?:[^>"']|"[^"]*"|'[^']*')*)?\s*\/?>/g,stack=[];let match,count=0,start=-1,end=-1,active=false;
   while((match=tokens.exec(xml))){const tag=match[0];if(tag.startsWith('<!')||tag.startsWith('<?'))continue;if(tag.startsWith('</')){if(active&&stack.length===3){end=tokens.lastIndex;break;}stack.pop();continue;}const name=/^<([^\s/>]+)/.exec(tag)[1],self=/\/\s*>$/.test(tag);if(stack.length===2&&stack[0]==='packageDescription'&&stack[1]==='resources'&&count++===index){start=match.index;if(self){end=tokens.lastIndex;break;}active=true;}if(!self)stack.push(name);}
   if(start<0||end<0)throw new Error('could not locate registered resource');const changed=Buffer.from(xml.slice(0,start)+xml.slice(end),'utf8');parse(changed,'package.xml');const temp=path.join(path.dirname(current.path),'.fgui-package-'+crypto.randomBytes(16).toString('hex')+'.tmp');
-  try{const fd=fs.openSync(temp,'wx');try{fs.writeFileSync(fd,changed);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}check();if(hash(fs.readFileSync(current.path))!==current.sha256)throw new Error('package changed during reference scan');fs.renameSync(temp,current.path);}finally{try{fs.unlinkSync(temp);}catch(e){if(e.code!=='ENOENT')throw e;}}
+  try{const fd=fs.openSync(temp,'wx');try{fs.writeFileSync(fd,changed);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}renameChecked(temp,current.path,()=>{check();if(hash(fs.readFileSync(current.path))!==current.sha256)throw new Error('package changed during reference scan');});}finally{try{fs.unlinkSync(temp);}catch(e){if(e.code!=='ENOENT')throw e;}}
   return {id:report.id,name:report.name,type:report.type,retained_file:retained,sha256:hash(changed),scope:report.scope};
  });
 }
