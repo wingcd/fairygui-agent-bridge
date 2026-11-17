@@ -170,8 +170,7 @@ does not perform editor or runtime compatibility validation. It detects changes
 to project metadata, settings and source files read during the scan and fails
 the scan if they change before it finishes.
 
-`validate` checks all registered resources by default, including the syntax and
-integer range of component sizes when specified. Pass
+`validate` checks all registered resources by default, including component size syntax and supported list layout, selection and scrolling values. Pass
 `exported_only: true` to check exported resources and their transitive
 dependencies while still checking package structure and resource IDs. A
 broken dependency closure is reported as an error, and validation falls back

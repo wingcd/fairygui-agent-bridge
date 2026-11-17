@@ -71,7 +71,11 @@ export function referenceIssues(node, resourceIndex, currentPackage, urls = null
       for(const field of ['lineGap','colGap','mainGridIndex']){const value=attr(child,field),min=field==='mainGridIndex'?-32768:-2147483648,max=field==='mainGridIndex'?32767:2147483647;if(value!==null&&(!/^[+-]?\d+$/.test(value)||Number(value)<min||Number(value)>max))issues.push(`child ${id}: invalid group ${field}`);}
     }
     const group = attr(child,'group'); if (group && child.tagName==='group') issues.push(`child ${id}: groups cannot belong to groups`); if (group && !groups.has(group)) issues.push(`child ${id}: unknown group ${group}`);
-    if (['list','tree'].includes(child.tagName)) for (const field of ['pageController','selectionController']) { const c=attr(child,field); if(c && !controllers.has(c)) issues.push(`child ${id}: ${field} references unknown controller ${c}`); }
+    if (['list','tree'].includes(child.tagName)) {
+      const enums={layout:['row','column','flow_hz','flow_vt','pagination'],selectionMode:['single','multiple','multipleSingleClick','none'],overflow:['visible','hidden','scroll'],scroll:['horizontal','vertical','both'],scrollBar:['default','visible','auto','hidden'],renderOrder:['ascent','descent','arch']};
+      for(const [field,values] of Object.entries(enums)){const value=attr(child,field);if(value!==null&&!values.includes(value))issues.push(`child ${id}: invalid list ${field} ${value}`);}
+      for(const field of ['pageController','selectionController']){const c=attr(child,field);if(c&&!controllers.has(c))issues.push(`child ${id}: ${field} references unknown controller ${c}`);}
+    }
     for (const button of children(child,'Button')) {
       const c=attr(button,'controller'), page=attr(button,'page');
       if (c && !controllers.has(c)) issues.push(`child ${id}: Button references unknown controller ${c}`);

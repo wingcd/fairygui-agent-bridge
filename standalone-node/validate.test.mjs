@@ -94,3 +94,11 @@ test('validation rejects nested and self-referencing group membership',async()=>
  for(const target of ['g','other']){fs.writeFileSync(file,`<component size="10,10"><displayList><group id="g" xy="0,0" group="${target}"/><group id="other" xy="0,0"/></displayList></component>`);const result=await validate({project:root});assert.ok(result.issues.some(issue=>issue.error.includes('groups cannot belong to groups')),target);}
  }finally{fs.rmSync(root,{recursive:true,force:true})}
 });
+
+test('validation and writes reject unsupported list layout and scrolling values',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-invalid-list-enums-'));try{
+  const folder=path.join(root,'assets','Demo');fs.mkdirSync(folder,{recursive:true});fs.writeFileSync(path.join(root,'p.fairy'),'<projectDescription/>');fs.writeFileSync(path.join(folder,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/"/></resources></packageDescription>');const file=path.join(folder,'Main.xml'),xml='<component size="100,100"><displayList><list id="l" xy="0,0" layout="flow_hz" selectionMode="single" overflow="scroll" scroll="vertical" scrollBar="auto" renderOrder="ascent"/></displayList></component>';fs.writeFileSync(file,xml);assert.equal((await validate({project:root})).valid,true);
+  const {execute}=await import('./project.mjs'),{writeComponent}=await import('./write.mjs'),args={project:root,pkg:'Demo',name:'Main'},sha=execute('read_component',args).sha256;
+  for(const [from,to,field] of [['layout="flow_hz"','layout="flow"','layout'],['selectionMode="single"','selectionMode="other"','selectionMode'],['overflow="scroll"','overflow="clip"','overflow'],['scroll="vertical"','scroll="diagonal"','scroll'],['scrollBar="auto"','scrollBar="always"','scrollBar'],['renderOrder="ascent"','renderOrder="reverse"','renderOrder']]){const invalid=xml.replace(from,to);assert.throws(()=>writeComponent({...args,xml:invalid,expected_sha256:sha}),new RegExp('invalid list '+field));assert.equal(fs.readFileSync(file,'utf8'),xml);fs.writeFileSync(file,invalid);const report=await validate({project:root});assert.ok(report.issues.some(issue=>issue.error.includes('invalid list '+field)),field);fs.writeFileSync(file,xml);}
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
