@@ -14,8 +14,9 @@ export function adaptGeneratorComponent(args){
  const objectTypes=new Set(['image','component','text','richtext','inputtext','graph','loader','list','group','movieclip','jta']);
  const vector=(value,label)=>{const parts=(value??'').split(',');if(parts.length!==2||parts.some(v=>!/^[-+]?\d+$/.test(v.trim())||Number(v)<-2147483648||Number(v)>2147483647))throw new Error(`invalid ${label}`);return parts.map(Number);};
  for(const group of children(list).filter(n=>n.tagName==='group')){
-  const members=children(group).filter(n=>objectTypes.has(n.tagName));if(!members.length)continue;
-  if(children(group).some(n=>!objectTypes.has(n.tagName)))throw new Error('nested generator group contains unsupported metadata or objects; manual conversion required');
+  const members=children(group).filter(n=>objectTypes.has(n.tagName));
+  if(children(group).some(n=>!objectTypes.has(n.tagName))&&(members.length||group.hasAttribute('gap')))throw new Error('nested generator group contains unsupported metadata or objects; manual conversion required');
+  if(!members.length){if(group.hasAttribute('gap'))throw new Error('empty generator group with gap requires manual conversion');continue;}
   if(members.some(n=>n.tagName==='group'||n.hasAttribute('group')))throw new Error('nested groups or existing group membership require manual conversion');
   const id=attr(group,'id'),layout=attr(group,'layout'),origin=vector(attr(group,'xy'),'group xy');if(!id||!['hz','vt'].includes(layout))throw new Error('nested generator group needs an id and hz/vt layout');
   const gapText=attr(group,'gap')??'0';if(!/^[-+]?\d+$/.test(gapText)||Number(gapText)<-2147483648||Number(gapText)>2147483647)throw new Error('invalid group gap');const gap=Number(gapText),axis=layout==='hz'?0:1;
