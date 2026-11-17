@@ -193,7 +193,7 @@ test('published validation detects broken gear references without a source proje
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-gear-validate-'));try{
   const file=path.join(root,'Demo.fui'),components=[{id:'main',name:'Main',width:20,height:20,controllers:[{name:'state',pages:[['p0','normal']]}],children:[{type:'text',id:'t',x:0,y:0,text:'Hi',gears:[{type:'display',controllerIndex:0,pages:['p0']}]}]}];
   async function report(){fs.writeFileSync(file,encodeImagePackage('abcdefgh','Demo',[],[],{components}));return validatePublished({file});}
-  assert.equal((await report()).valid,true);components[0].children[0].gears[0].controllerIndex=1;let result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.child==='t'&&issue.error.includes('controller index')));
+  const valid=await report();assert.equal(valid.valid,true);assert.deepEqual(valid.warnings,[]);components[0].children[0].gears[0].controllerIndex=1;let result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.child==='t'&&issue.error.includes('controller index')));
   components[0].children[0].gears[0].controllerIndex=0;components[0].children[0].gears[0].pages=['missing'];result=await report();assert.equal(result.valid,true);assert.ok(result.warnings.some(issue=>issue.child==='t'&&issue.pages.includes('missing')));
   components[0].children[0].gears.push({type:'display',controllerIndex:0,pages:['p0']});result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.error.includes('duplicate published gear')));
   components[0].children[0].gears=[{type:'display2',controllerIndex:0,pages:['p0'],condition:2}];result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.error.includes('gear condition')));
@@ -216,5 +216,15 @@ test('published validation detects invalid relation targets and types without so
   assert.equal((await report()).valid,true);components[0].relations[0].target=2;let result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.component==='main'&&issue.error.includes('relation target')));
   components[0].relations[0].target=0;components[0].children[1].relations[0].target=1;result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.child==='b'&&issue.error.includes('relation target')));
   components[0].children[1].relations[0].target=0;components[0].children[1].relations[0].types=[25];result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.child==='b'&&issue.error.includes('relation type')));
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('published validation detects duplicate component IDs and controller pages',async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-component-ids-'));try{
+  const file=path.join(root,'Demo.fui'),component={id:'main',name:'Main',width:20,height:20,controllers:[{name:'state',pages:[['p0','normal'],['p1','active']]}],children:[{type:'text',id:'a',x:0,y:0,text:'A'},{type:'text',id:'b',x:0,y:0,text:'B'}]};
+  async function report(){fs.writeFileSync(file,encodeImagePackage('abcdefgh','Demo',[],[],{components:[component]}));return validatePublished({file});}
+  assert.equal((await report()).valid,true);component.children[1].id='a';let result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.error.includes('duplicate published child ID')));component.children[1].id='b';
+  component.controllers.push({name:'state',pages:[]});result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.error.includes('duplicate published controller name')));component.controllers.pop();
+  component.controllers[0].pages[1][0]='p0';result=await report();assert.equal(result.valid,false);assert.ok(result.issues.some(issue=>issue.error.includes('duplicate published controller page ID')));
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });

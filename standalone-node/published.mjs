@@ -35,7 +35,9 @@ export async function validatePublished(args,{preselectedClosure=null}={}){
  let sourceContext;async function getSourceContext(){if(!sourceContext){const root=projectRoot(args.project),all=packages(root),found=all.filter(p=>attr(p.tree,'id')===data.id);if(found.length!==1)throw new Error('published package ID not found or ambiguous in project');const {folder,tree}=found[0],closure=args.exported_only?(preselectedClosure??await exportedClosure(all,file=>fs.readFile(file))):null;sourceContext={all,folder,tree,closure};}return sourceContext;}
  for(const item of data.items){
   if(item.type===3&&data.format!=='xml'){
-   const children=item.component.children;
+   const children=item.component.children,childIds=new Set(),controllerNames=new Set();
+   for(const child of children){if(!child.id||childIds.has(child.id))issues.push({component:item.id,child:child.id,error:'missing or duplicate published child ID'});childIds.add(child.id);}
+   for(const controller of item.component.controllers){if(!controller.name||controllerNames.has(controller.name))issues.push({component:item.id,controller:controller.name,error:'missing or duplicate published controller name'});controllerNames.add(controller.name);const pageIds=new Set();for(const page of controller.pages){if(!page.id||pageIds.has(page.id))issues.push({component:item.id,controller:controller.name,page:page.id,error:'missing or duplicate published controller page ID'});pageIds.add(page.id);}}
    const checkRelations=(relations,ownerIndex,child)=>{for(const relation of relations??[]){
     const context={component:item.id,...(child===null?{}:{child}),target:relation.target};
     if(relation.target < -1||relation.target>=children.length||relation.target===ownerIndex)issues.push({...context,error:'published relation target index is invalid'});
@@ -49,7 +51,7 @@ export async function validatePublished(args,{preselectedClosure=null}={}){
     if(!Number.isInteger(gear.type)||gear.type<0||gear.type>9)issues.push({...context,error:'unsupported published gear type'});
     if(seen.has(gear.type))issues.push({...context,error:'duplicate published gear type'});seen.add(gear.type);
     if(!controller)issues.push({...context,error:'published gear controller index is invalid'});
-    else {const known=new Set(controller.pages.map(page=>page[0])),pages=gear.pages??gear.values?.map(value=>value.page)??[];const unknown=pages.filter(page=>!known.has(page));if(unknown.length)warnings.push({...context,pages:unknown,warning:'published gear refers to unknown controller pages'});}
+    else {const known=new Set(controller.pages.map(page=>page.id)),pages=gear.pages??gear.values?.map(value=>value.page)??[];const unknown=pages.filter(page=>!known.has(page));if(unknown.length)warnings.push({...context,pages:unknown,warning:'published gear refers to unknown controller pages'});}
     if(gear.type===8&&![0,1].includes(gear.condition))issues.push({...context,error:'invalid published display gear condition'});
     if(gear.tween&&(!Number.isFinite(gear.duration)||gear.duration<0||!Number.isFinite(gear.delay)||gear.delay<0))issues.push({...context,error:'invalid published gear tween timing'});
    }
