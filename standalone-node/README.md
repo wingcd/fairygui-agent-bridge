@@ -83,7 +83,7 @@ and the editor’s complete filtering behavior remain unverified, so review the
 result before using it as a complete translation catalog.
 `find_references` scans registered component references, supported UI URLs,
 project settings and same-package bitmap fonts; its `complete` flag reports
-scan errors, while dynamic references remain outside its scope.
+scan errors, including unsupported nested display objects and multiple display lists; dynamic references remain outside its scope.
 `unregister_resource` requires a current package SHA-256, rejects detected or
 incompletely scanned references, and keeps the original resource file.
 `import_image`, `import_sound` and `import_movieclip` validate and register
