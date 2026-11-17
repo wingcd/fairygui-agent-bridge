@@ -19,10 +19,10 @@ export async function exportStrings(args){
    const file=componentPath(pkg.folder,item),component=parse(await read(file),file);if(component.tagName!=='component')throw new Error('invalid component root: '+file);context=path.basename(pkg.folder)+'/'+path.relative(pkg.folder,file).split(path.sep).join('/');
    const displays=children(component,'displayList');if(displays.length>1)throw new Error('component has multiple display lists: '+file);const objects=children(displays[0]),objectIds=objects.map(object=>attr(object,'id'));if(objectIds.some(id=>!id)||new Set(objectIds).size!==objectIds.length)throw new Error('missing or duplicate display object id: '+file);
    for(const object of objects){
-    if(object.tagName==='group'&&children(object).some(child=>['image','text','richtext','component','list','group','graph','loader','movieclip','jta'].includes(child.tagName)))throw new Error('nested display objects inside group are not supported: '+file);
+    if(object.tagName==='group'&&children(object).some(child=>['image','text','richtext','inputtext','component','list','group','graph','loader','movieclip','jta'].includes(child.tagName)))throw new Error('nested display objects inside group are not supported: '+file);
     const childId=attr(object,'id');if(!childId)throw new Error('display object id is missing: '+file);const key=packageId+id+'-'+childId,label=attr(object,'name')||childId;
     add(key+'-tips',attr(object,'tooltips'),label);
-    if(['text','richtext'].includes(object.tagName)){
+    if(['text','richtext','inputtext'].includes(object.tagName)){
      add(key,attr(object,'text'),label);add(key+'-prompt',attr(object,'prompt'),label);
     }
     if(object.tagName==='component'){
@@ -30,7 +30,7 @@ export async function exportStrings(args){
      for(const combo of children(object,'ComboBox')){add(key,attr(combo,'title'),label);for(const [i,entry] of children(combo,'item').entries())add(key+'-'+i,attr(entry,'title'),label);}
     }
     if(object.tagName==='list')for(const [i,entry] of children(object,'item').entries()){add(key+'-'+i,attr(entry,'title'),label);add(key+'-'+i+'-0',attr(entry,'selectedTitle'),label);}
-    if(['text','richtext','component'].includes(object.tagName))for(const gear of children(object,'gearText')){for(const [i,value] of (attr(gear,'values')??'').split('|').entries())add(key+'-texts_'+i,value,label);add(key+'-texts_def',attr(gear,'default'),label);}
+    if(['text','richtext','inputtext','component'].includes(object.tagName))for(const gear of children(object,'gearText')){for(const [i,value] of (attr(gear,'values')??'').split('|').entries())add(key+'-texts_'+i,value,label);add(key+'-texts_def',attr(gear,'default'),label);}
    }
   }
  }
