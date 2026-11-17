@@ -6,17 +6,19 @@ import {packages,resources,componentPath,parse,children,attr,projectRoot} from '
 // Extract the tested TranslationHelper-compatible subset. Numeric-only values
 // are ignored as they are by the editor's default export settings.
 export async function exportStrings(args){
- const root=projectRoot(args.project),rows=[],keys=new Set(),snapshot=new Map(),initial=packages(root);
+ const root=projectRoot(args.project),rows=[],keys=new Set(),packageIds=new Set(),snapshot=new Map(),initial=packages(root);
  const read=async file=>{const bytes=await fs.readFile(file);snapshot.set(file,crypto.createHash('sha256').update(bytes).digest('hex'));return bytes;};
  const add=(key,value,label)=>{if(!value||value==='-'||!/[A-\uffff]/.test(value))return;if(keys.has(key))throw new Error('duplicate translation key: '+key);keys.add(key);rows.push({key,value,label});};
  for(const pkg of initial){
   const packageFile=path.join(pkg.folder,'package.xml');pkg.tree=parse(await read(packageFile),packageFile);if(pkg.tree.tagName!=='packageDescription')throw new Error('invalid package root: '+packageFile);
-  const packageId=attr(pkg.tree,'id');if(!packageId)throw new Error('package id is missing');
+  const packageId=attr(pkg.tree,'id');if(!packageId||packageIds.has(packageId))throw new Error('missing or duplicate package id: '+packageFile);packageIds.add(packageId);
+  if(children(pkg.tree,'resources').length!==1)throw new Error('package must have exactly one resources element: '+packageFile);const resourceIds=resources(pkg.tree).map(item=>attr(item,'id'));if(resourceIds.some(id=>!id)||new Set(resourceIds).size!==resourceIds.length)throw new Error('missing or duplicate resource id: '+packageFile);
   const items=resources(pkg.tree).filter(item=>item.tagName==='component').sort((a,b)=>{const x=(attr(a,'path')||'/').split('/').filter(Boolean),y=(attr(b,'path')||'/').split('/').filter(Boolean);for(let i=0;i<Math.max(x.length,y.length);i++){if(i>=x.length)return -1;if(i>=y.length)return 1;if(x[i]!==y[i])return x[i]<y[i]?-1:1;}const an=(attr(a,'name')||''),bn=(attr(b,'name')||'');return an<bn?-1:an>bn?1:0;});
   for(const item of items){
    if(item.tagName!=='component')continue;const id=attr(item,'id');if(!id)throw new Error('component id is missing');
    const file=componentPath(pkg.folder,item),component=parse(await read(file),file);if(component.tagName!=='component')throw new Error('invalid component root: '+file);
-   for(const object of children(children(component,'displayList')[0])){
+   const displays=children(component,'displayList');if(displays.length>1)throw new Error('component has multiple display lists: '+file);const objects=children(displays[0]),objectIds=objects.map(object=>attr(object,'id'));if(objectIds.some(id=>!id)||new Set(objectIds).size!==objectIds.length)throw new Error('missing or duplicate display object id: '+file);
+   for(const object of objects){
     const childId=attr(object,'id');if(!childId)throw new Error('display object id is missing: '+file);const key=packageId+id+'-'+childId,label=attr(object,'name')||childId;
     add(key+'-tips',attr(object,'tooltips'),label);
     if(['text','richtext'].includes(object.tagName)){
