@@ -172,3 +172,19 @@ test('large package validation checks every image against its sprite',async()=>{
   const images=Array.from({length:2000},(_,i)=>({id:'i'+i,name:'n'+i,width:i===1733?2:1,height:1})),placements=images.map(({id})=>({id,x:0,y:0,width:1,height:1}));const file=path.join(root,'Demo.bin');fs.writeFileSync(file,encodeImagePackage('abcdefgh','Demo',images,[{width:1,height:1,items:placements}]));fs.writeFileSync(path.join(root,'Demo_atlas0.png'),await encodePng({width:1,height:1,pixels:Buffer.from([1,2,3,255])}));const report=await validatePublished({file});assert.equal(report.valid,false);assert.deepEqual(report.issues.filter(issue=>issue.error.includes('sprite dimensions')).map(issue=>issue.image),['i1733']);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('published gear comparison detects changed pages, values, defaults and tween',{skip:process.platform!=='win32'},async()=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-gear-compare-'));try{
+  const folder=path.join(root,'assets','Demo');fs.mkdirSync(folder,{recursive:true});fs.writeFileSync(path.join(root,'p.fairy'),'<projectDescription/>');fs.writeFileSync(path.join(folder,'package.xml'),'<packageDescription id="abcdefgh"><resources><component id="main" name="Main.xml" path="/"/></resources><publish name="Demo"/></packageDescription>');
+  const source=path.join(folder,'Main.xml'),xml='<component size="100,80"><controller name="state" pages="p0,Off,p1,On"/><displayList><text id="title" xy="0,0" text="hello"><gearDisplay controller="state" pages="p0"/><gearDisplay2 controller="state" pages="p1" condition="1"/><gearText controller="state" pages="p0,p1" values="Hello|World" default="Default"/><gearFontSize controller="state" pages="p0,p1" values="12|-" default="20"/><gearXY controller="state" pages="p0,p1" values="1,2|-" default="3,4" tween="true" ease="Quad.Out" duration="0.3" delay="0.1"/><gearColor controller="state" pages="p0" values="#112233,#445566"/></text></displayList></component>';fs.writeFileSync(source,xml);
+  const result=await publishImages({project:root,pkg:'Demo',output:path.join(root,'out')},{allowSounds:true,allowComponents:true});let report=await validatePublished({project:root,file:result.file,compare_components:true});assert.equal(report.valid,true,JSON.stringify(report.issues));
+  for(const [from,to] of [['pages="p0"','pages="p1"'],['condition="1"','condition="0"'],['Hello|World','Hello|Other'],['default="20"','default="21"'],['duration="0.3"','duration="0.4"'],['#112233,#445566','#112234,#445566']]){fs.writeFileSync(source,xml.replace(from,to));report=await validatePublished({project:root,file:result.file,compare_components:true});assert.ok(report.issues.some(issue=>issue.child==='title'&&issue.error.includes('gear')),from);}
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('gear source comparison supports size, look, animation and icons',async()=>{
+ const {sourceGears}=await import('./gear-comparison.mjs'),{parse}=await import('./project.mjs');
+ const xml='<text><gearSize controller="state" pages="p0" values="20,30" default="4,5,2,3"/><gearLook controller="state" pages="p0" values="0.5,90,1"/><gearAni controller="state" pages="p0" values="3,p" default="2,s"/><gearIcon controller="state" pages="p0" values="" default=""/></text>',node=parse(Buffer.from(xml),'test');
+ assert.deepEqual(sourceGears(node,[{name:'state'}]),[{type:2,controller:0,values:[{page:'p0',value:[20,30,1,1]}],default:[4,5,2,3],tween:false},{type:3,controller:0,values:[{page:'p0',value:[0.5,90,true,true]}],tween:false},{type:5,controller:0,values:[{page:'p0',value:{playing:true,frame:3}}],default:{playing:false,frame:2},tween:false},{type:7,controller:0,values:[{page:'p0',value:null}],default:null,tween:false}]);
+ assert.throws(()=>sourceGears(parse(Buffer.from(xml.replace('0.5,90,1','0.5,90,2')),'test'),[{name:'state'}]),/look flags/);
+});

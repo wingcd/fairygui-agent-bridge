@@ -159,7 +159,7 @@ component extension types, Button and ComboBox options, Button, Label and
 ComboBox instance options, and ProgressBar and Slider options and instance values,
 list layout, selection, spacing, scrolling, controllers, item data and tree settings,
 controller names, pages and supported
-play-transition actions, and transition settings plus item types, times,
+play-transition actions, supported child gear records including page values and tween settings, and transition settings plus item types, times,
 targets, labels, supported values, tween settings and paths. It does not compare
 other controller actions or all child properties; XML component
 comparison is not yet supported.
