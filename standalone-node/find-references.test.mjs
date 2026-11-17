@@ -65,3 +65,13 @@ test('unregister rejects incomplete scans of nested group display objects',async
   fs.writeFileSync(path.join(folder,'Main.xml'),'<component><displayList/><displayList><image id="nested" src="img" xy="0,0"/></displayList></component>');const multiple=await call('find_references');assert.equal(multiple.data.complete,false);assert.match(multiple.data.warnings[0].error,/multiple display lists/);const rejected=await call('unregister_resource',{expected_sha256:read.sha256});assert.equal(rejected.ok,false);assert.deepEqual(fs.readFileSync(packageFile),before);
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('reference scanning refuses symbolic links in project settings',async t=>{
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'fgui-settings-link-'));try{
+  const folder=path.join(root,'assets','Demo'),target=path.join(root,'external-settings');fs.mkdirSync(folder,{recursive:true});fs.mkdirSync(target);fs.writeFileSync(path.join(root,'p.fairy'),'<projectDescription/>');const packageFile=path.join(folder,'package.xml');fs.writeFileSync(packageFile,'<packageDescription id="abcdefgh"><resources><image id="img" name="image.png" path="/"/></resources></packageDescription>');fs.writeFileSync(path.join(folder,'image.png'),'keep');fs.writeFileSync(path.join(target,'Common.json'),'{"icon":"ui://abcdefghimg"}');const settings=path.join(root,'settings');
+  try{fs.symlinkSync(target,settings,process.platform==='win32'?'junction':'dir');}catch(error){if(['EPERM','EACCES','ENOTSUP'].includes(error.code)){t.skip('directory links unavailable');return;}throw error;}
+  const args={project:root,pkg:'Demo',item:'img'},sha=execute('read_package',args).sha256,before=fs.readFileSync(packageFile),call=async(name,extra={})=>JSON.parse((await message({jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:{...args,...extra}}})).result.content[0].text);
+  let scan=await call('find_references');assert.equal(scan.data.complete,false);assert.match(scan.data.warnings[0].error,/symbolic links/);let removed=await call('unregister_resource',{expected_sha256:sha});assert.equal(removed.ok,false);assert.deepEqual(fs.readFileSync(packageFile),before);
+  fs.unlinkSync(settings);fs.mkdirSync(settings);fs.symlinkSync(target,path.join(settings,'linked'),process.platform==='win32'?'junction':'dir');scan=await call('find_references');assert.equal(scan.data.complete,false);assert.match(scan.data.warnings[0].error,/symbolic links/);removed=await call('unregister_resource',{expected_sha256:sha});assert.equal(removed.ok,false);assert.deepEqual(fs.readFileSync(packageFile),before);
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
