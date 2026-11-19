@@ -22,3 +22,9 @@ test('static group preview follows the Cocos layout algorithm', {skip:!process.e
   for(let i=0;i<members.length;i++)assert.equal(Number(attr(objects[i+1],'xy').split(',')[axis==='x'?0:1]),members[i][axis+'Min']);
  }
 });
+
+test('PIXI group preview refuses relations targeting a group',()=>{
+ const node=parse(Buffer.from('<component><displayList><group id="g" xy="0,0" layout="hz"/><graph id="a" group="g" xy="0,0" size="10,10"/><graph id="b" xy="20,0" size="10,10"><relation target="g" sidePair="left-left"/></graph></displayList></component>'),'fixture');
+ const group=children(children(node,'displayList')[0])[0];
+ assert.equal(previewStaticGroup(node,group),false);
+});

@@ -332,7 +332,12 @@ FairyGUI PixiJS runtime and Chrome directly, without Cocos Creator. It currently
 detects Chrome and, on Windows, Edge in common installation locations; `chrome` or `FGUI_CHROME`
 can select a different executable. It currently
 uses a restricted legacy XML preview subset, including simple nested Button and Label
-components, static horizontal or vertical groups with fixed-size members, native `inputtext` and `text input="true"` fields, and styled text including outline and shadows; unsupported features are rejected. Group members may use size gears and supported size transitions on images and graphs; other dynamic layouts and animations remain unsupported. Only the requested component and
+components, horizontal and vertical groups with fixed-size members, native
+`inputtext` and `text input="true"` fields, and styled text including outline
+and shadows. Preview groups relayout when a `gearSize` or a supported autoplay
+`Size` transition resizes an image or graph member. For groups with explicit
+layout settings, a relation on a member or targeting the group causes the
+preview to fail. Only the requested component and
 its same-package dependencies are selected; referenced external packages still
 include their exported resources. The Cocos sample
 `MainMenu/Main` renders, but pixel comparison found differences from Cocos

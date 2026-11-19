@@ -1,8 +1,10 @@
 # fgui-agent-bridge
 
-**English summary:** A FairyGUI editor plugin + CLI + MCP server that lets AI agents build and publish FairyGUI UI through official editor APIs. Works with the **free** editor — including publishing (verified: output is byte-identical to clicking Publish in the GUI).
+**English summary.** Build and publish FairyGUI UI through an editor plugin that works with the free editor, or use the standalone Node.js CLI and MCP service for project editing, validation, Pixi previews, and experimental publishing without opening the editor.
 
-让 AI（Claude / Cursor / ZCode / 任何 MCP 客户端，或 CLI）直接操作 FairyGUI 编辑器制作 UI：
+通过 CLI 或 MCP 客户端处理 FairyGUI 工程。编辑器插件通过官方 API 操作正在打开的工程，独立 Node 服务直接处理磁盘上的工程文件。
+
+编辑器插件支持以下操作：
 
 - **创建组件**、插入/删除舞台元件、改属性（走官方编辑器 API，支持撤销）
 - **发布 UI 包**（产出与编辑器手动发布**逐字节一致**，实测 md5 相同）
@@ -20,14 +22,14 @@ npm ci
 node http-server.mjs --port 7532
 ```
 
-JSON-RPC 地址为 `http://127.0.0.1:7532/rpc`，MCP Streamable HTTP 地址为 `http://127.0.0.1:7532/mcp`；也可用 `node mcp-server.mjs` 启动 stdio MCP。CLI 示例：
+JSON-RPC 地址为 `http://127.0.0.1:7532/rpc`，MCP Streamable HTTP 地址为 `http://127.0.0.1:7532/mcp`。也可用 `node mcp-server.mjs` 启动 stdio MCP，或在同一目录直接运行 CLI：
 
 ```powershell
 node fgui.mjs list_packages '{"project":"D:/work/my-ui-project"}'
 ```
 
 启动服务后，访问 `http://127.0.0.1:7532/viewer` 可选择项目、包和组件，
-通过 FairyGUI Pixi 运行时预览并截图；无需打开编辑器。逐个检查项目中已注册
+通过 FairyGUI Pixi 运行时预览、切换根组件及嵌套实例的控制器页面并截图。逐个检查项目中已注册
 组件能否截图，可在 `standalone-node` 目录运行：
 
 ```powershell
@@ -35,12 +37,14 @@ node audit-screenshots.mjs D:/work/my-ui-project
 ```
 
 默认逐个检查；可添加 `--concurrency=2` 并行检查（支持 1–4，会增加资源占用）。并行时结果按完成顺序输出。
-检查结果逐行输出 JSON，失败时返回非零退出码。截图使用的 Pixi 预览仍有
-功能与排版限制，生成图片不等同于验证与编辑器逐像素一致。
+检查结果逐行输出 JSON，有截图失败时返回非零退出码。截图审计只检查能否出图。
+Pixi 支持成员尺寸固定的横向和纵向组。图片或图形成员通过 `gearSize` 或受支持的自动播放 `Size` 动效改变尺寸时，组会重新布局。启用布局的组如果被关系引用，或成员自身带有关系，预览会报错。
 
-服务支持项目和组件读写、资源导入、校验、图集及实验性发布。项目级发布和预检默认按导出资源及跨包依赖处理；设置 `exported_only: false` 可包含全部已注册资源。写操作使用读取结果中的 `sha256` 防止覆盖过期版本。16 个 Cocos 样例的筛选发布结果已经过编辑器数据和图集像素对比；并非全部编辑器功能和运行时渲染均已验证。完整用法、限制和测试命令见 [独立服务说明](standalone-node/README.md)。Python 实现仍保留在 `standalone/`。
+服务支持资源导入、组件编辑（含控制器和动效）、校验、图集及实验性发布。编辑已有组件时，将读取结果中的 `sha256` 作为 `expected_sha256` 传入，防止覆盖过期版本。`adapt_generator_component` 可把生成器 XML 转换成待审阅的组件 XML，并返回转换假设和引用检查结果。
 
-## 架构
+项目级发布和预检默认处理导出资源及其跨包依赖。设置 `exported_only: false` 可包含全部已注册资源。16 个 Cocos 样例的筛选发布结果已与编辑器发布数据和图集像素对比。完整用法、兼容范围和测试命令见 [独立 Node 服务说明](standalone-node/README.md)。另有 [Python 实现](standalone/README.md)。
+
+## 编辑器插件架构
 
 ```
 AI agent ──MCP(stdio)──┐
@@ -220,10 +224,6 @@ v0.1.1 追加（2026-10 实测）：
 - **手写 XML 的 8 位色坑**：`#RRGGBBAA` 运行时可能只取后 6 位（`#000000c8`→纯蓝 `(0,0,200)`），组件里用 6 位色 + `alpha="0.x"` 属性组合。
 
 限制：编辑器需保持运行（可最小化）；本地用户可以访问队列文件；每个编辑器一次执行一个命令（串行队列）。
-
-## 状态
-
-v0.1.0 —— 核心链路已验证。计划中：transition/controller 编辑、图集级查询、预览渲染截图、发布进度流。
 
 ## License
 
