@@ -42,7 +42,7 @@ Pixi 支持成员尺寸固定的横向和纵向组。图片或图形成员通过
 
 服务支持资源导入、组件编辑（含控制器和动效）、校验、图集及实验性发布。编辑已有组件时，将读取结果中的 `sha256` 作为 `expected_sha256` 传入，防止覆盖过期版本。`adapt_generator_component` 可把生成器 XML 转换成待审阅的组件 XML，并返回转换假设和引用检查结果。
 
-项目级发布和预检默认处理导出资源及其跨包依赖。设置 `exported_only: false` 可包含全部已注册资源。16 个 Cocos 样例的筛选发布结果已与编辑器发布数据和图集像素对比。完整用法、兼容范围和测试命令见 [独立 Node 服务说明](standalone-node/README.md)。另有 [Python 实现](standalone/README.md)。
+项目级发布和预检默认处理导出资源及其跨包依赖。设置 `exported_only: false` 可包含全部已注册资源。16 个 Cocos 样例的筛选发布结果已与编辑器发布数据和图集像素对比。完整用法、兼容范围和测试命令见 [独立 Node 服务中文文档](standalone-node/README.md) 或 [English documentation](standalone-node/README.en.md)。另有 [Python 实现](standalone/README.md)。
 
 ## 编辑器插件架构
 
